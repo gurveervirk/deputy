@@ -82,6 +82,19 @@ def search_entities(
     ).fetchall()
     return [dict(row) for row in rows]
 
+def set_config(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+        (key, value),
+    )
+
+def get_config(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute(
+        "SELECT value FROM config WHERE key = ?",
+        (key,),
+    ).fetchone()
+    return row["value"] if row else None
+
 def get_entity_by_path(
     conn: sqlite3.Connection, full_path: str
 ) -> dict | None:

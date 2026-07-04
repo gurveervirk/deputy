@@ -8,6 +8,8 @@ from .main import (
     insert_entity,
     search_entities,
     get_entity_by_path,
+    set_config,
+    get_config,
 )
 
 __all__ = [
@@ -20,4 +22,6 @@ __all__ = [
     "insert_entity",
     "search_entities",
     "get_entity_by_path",
+    "set_config",
+    "get_config",
 ]
