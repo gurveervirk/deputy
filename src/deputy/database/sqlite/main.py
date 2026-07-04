@@ -1,0 +1,94 @@
+import re
+import sqlite3
+from pathlib import Path
+
+def open_database(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.create_function("REGEXP", 2, _regexp)
+    return conn
+
+def _regexp(pattern: str, value: str) -> bool:
+    return re.search(pattern, value) is not None
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    schema_path = Path(__file__).parent / "schema.sql"
+    conn.executescript(schema_path.read_text())
+
+def get_branch_files(
+    conn: sqlite3.Connection, branch_name: str
+) -> dict[str, tuple[str, float]]:
+    rows = conn.execute(
+        "SELECT filepath, content_hash, last_modified FROM branch_files WHERE branch_name = ?",
+        (branch_name,),
+    ).fetchall()
+    return {row["filepath"]: (row["content_hash"], row["last_modified"]) for row in rows}
+
+def content_hash_exists(conn: sqlite3.Connection, content_hash: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM branch_files WHERE content_hash = ? LIMIT 1",
+        (content_hash,),
+    ).fetchone()
+    return row is not None
+
+def upsert_branch_file(
+    conn: sqlite3.Connection,
+    branch_name: str,
+    filepath: str,
+    content_hash: str,
+    last_modified: float,
+) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO branch_files (branch_name, filepath, content_hash, last_modified)
+           VALUES (?, ?, ?, ?)""",
+        (branch_name, filepath, content_hash, last_modified),
+    )
+
+def update_mtime(
+    conn: sqlite3.Connection,
+    branch_name: str,
+    filepath: str,
+    last_modified: float,
+) -> None:
+    conn.execute(
+        "UPDATE branch_files SET last_modified = ? WHERE branch_name = ? AND filepath = ?",
+        (last_modified, branch_name, filepath),
+    )
+
+def insert_entity(
+    conn: sqlite3.Connection,
+    id: str,
+    file_hash: str,
+    language: str,
+    full_path: str,
+    name: str,
+    type: str,
+    metadata_json: str,
+) -> None:
+    conn.execute(
+        """INSERT OR IGNORE INTO entities (id, file_hash, language, full_path, name, type, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (id, file_hash, language, full_path, name, type, metadata_json),
+    )
+
+def search_entities(
+    conn: sqlite3.Connection, pattern: str
+) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM entities WHERE full_path REGEXP ? OR name REGEXP ? ORDER BY full_path, name",
+        (pattern, pattern),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+def get_entity_by_path(
+    conn: sqlite3.Connection, full_path: str
+) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM entities WHERE full_path = ? LIMIT 1",
+        (full_path,),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
