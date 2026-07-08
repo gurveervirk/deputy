@@ -24,3 +24,18 @@ CREATE TABLE IF NOT EXISTS config (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS cache_entries (
+    module_fqn     TEXT NOT NULL,
+    symbol_name    TEXT NOT NULL,
+    resolved_ids   TEXT NOT NULL,
+    unresolved_ids TEXT NOT NULL,
+    PRIMARY KEY (module_fqn, symbol_name)
+);
+
+CREATE TABLE IF NOT EXISTS cache_module_links (
+    module_fqn        TEXT NOT NULL,
+    cache_module_fqn  TEXT NOT NULL,
+    cache_symbol_name TEXT NOT NULL,
+    PRIMARY KEY (module_fqn, cache_module_fqn, cache_symbol_name)
+);
