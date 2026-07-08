@@ -39,3 +39,14 @@ CREATE TABLE IF NOT EXISTS cache_module_links (
     cache_symbol_name TEXT NOT NULL,
     PRIMARY KEY (module_fqn, cache_module_fqn, cache_symbol_name)
 );
+
+CREATE TABLE IF NOT EXISTS symbol_table_entries (
+    module_fqn  TEXT NOT NULL,
+    symbol_name TEXT NOT NULL,
+    entity_id   TEXT NOT NULL,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (module_fqn, symbol_name, entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_symbol_table_entries_module ON symbol_table_entries(module_fqn);
+CREATE INDEX IF NOT EXISTS idx_symbol_table_entries_entity ON symbol_table_entries(entity_id);

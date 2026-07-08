@@ -11,6 +11,8 @@ from .main import (
     set_config,
     get_config,
 )
+from .symbol_cache import SqliteSymbolCache
+from .symbol_table_builder import SqliteSymbolTableBuilder
 
 __all__ = [
     "open_database",
@@ -24,4 +26,6 @@ __all__ = [
     "get_entity_by_path",
     "set_config",
     "get_config",
+    "SqliteSymbolCache",
+    "SqliteSymbolTableBuilder",
 ]
