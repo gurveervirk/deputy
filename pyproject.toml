@@ -18,9 +18,16 @@ dependencies = [
 [project.scripts]
 deputy = "deputy:main"
 
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
 
 [tool.uv.sources]
 deproc-core = { path = "../deproc/deproc-core", editable = true }
