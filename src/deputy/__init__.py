@@ -1,7 +1,13 @@
 import typer
 from rich.console import Console
 from rich.table import Table
-from deputy.tools import init_database, run_sync, search_entities, get_entity_info
+from deputy._version import __version__
+from deputy.tools import (
+    init_database,
+    run_sync,
+    search_entities,
+    get_entity_info,
+)
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
@@ -17,14 +23,23 @@ def init(
 def sync(
     force: bool = typer.Option(False, "--force", "-f", help="Force full re-sync"),
 ) -> None:
-    run_sync(force)
+    try:
+        run_sync(force)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
     console.print("[yellow]Sync complete[/yellow]")
 
 @app.command(name="search")
 def search(
     pattern: str = typer.Argument(..., help="Regular expression pattern"),
 ) -> None:
-    results = search_entities(pattern)
+    try:
+        results = search_entities(pattern)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
+
     if not results:
         console.print("[yellow]No matching entities found[/yellow]")
         raise typer.Exit()
@@ -38,7 +53,12 @@ def search(
 def get_info(
     full_path: str = typer.Argument(..., help="Exact entity full path"),
 ) -> None:
-    entity = get_entity_info(full_path)
+    try:
+        entity = get_entity_info(full_path)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
+
     if entity is None:
         console.print(f"[red]Entity not found:[/red] {full_path}")
         raise typer.Exit()
