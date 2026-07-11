@@ -49,7 +49,7 @@ def search(
         table.add_row(row["name"], row["type"], row["language"], row["full_path"])
     console.print(table)
 
-@app.command(name="get-info")
+@app.command(name="info")
 def get_info(
     full_path: str = typer.Argument(..., help="Exact entity full path"),
     resolve: bool = typer.Option(False, "--resolve", "-r", help="Resolve symbol through imports/re-exports"),
