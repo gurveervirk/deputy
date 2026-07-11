@@ -1,7 +1,35 @@
 [project]
 name = "deputy"
 version = "0.1.0"
-description = "Add your description here"
+description = "A code intelligence CLI tool for querying and navigating code entities."
 readme = "README.md"
+authors = [
+    { name = "Gurveer Singh Virk", email = "gurveervirk.15517@gmail.com" }
+]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "deproc-core",
+    "deproc-python",
+    "deproc-utils-tree-sitter",
+    "typer>=0.26.8",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+deputy = "deputy:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.uv.sources]
+deproc-core = { path = "../deproc/deproc-core", editable = true }
+deproc-python = { path = "../deproc/deproc-python", editable = true }
+deproc-utils-tree-sitter = { path = "../deproc/deproc-utils-tree-sitter", editable = true }
