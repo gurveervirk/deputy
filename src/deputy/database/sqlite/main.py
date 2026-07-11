@@ -91,8 +91,9 @@ def delete_entity_by_module_fqn(conn: sqlite3.Connection, module_fqn: str) -> No
 def search_entities(
     conn: sqlite3.Connection, pattern: str
 ) -> list[dict]:
+    # Import statements have no real fqns, so fullpath created for them appearing in output would look odd
     rows = conn.execute(
-        "SELECT * FROM entities WHERE full_path REGEXP ? OR name REGEXP ? ORDER BY full_path, name",
+        "SELECT * FROM entities WHERE (full_path REGEXP ? OR name REGEXP ?) AND type != 'IMPORT_STATEMENT' ORDER BY full_path, name",
         (pattern, pattern),
     ).fetchall()
     return [dict(row) for row in rows]
