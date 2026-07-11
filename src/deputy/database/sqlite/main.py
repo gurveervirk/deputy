@@ -46,6 +46,16 @@ def upsert_branch_file(
         (branch_name, filepath, content_hash, last_modified),
     )
 
+def delete_branch_file(
+    conn: sqlite3.Connection,
+    branch_name: str,
+    filepath: str,
+) -> None:
+    conn.execute(
+        "DELETE FROM branch_files WHERE branch_name = ? AND filepath = ?",
+        (branch_name, filepath),
+    )
+
 def update_mtime(
     conn: sqlite3.Connection,
     branch_name: str,
