@@ -6,6 +6,9 @@ from deputy.database.sqlite import (
     delete_entity_by_module_fqn,
     get_branch_files,
     get_config,
+    get_entities_by_ids,
+    get_entities_by_path,
+    get_entity_by_id,
     get_entity_by_path,
     init_schema,
     open_database,
@@ -114,8 +117,36 @@ def search_entities(pattern: str) -> list[dict]:
     conn.close()
     return results
 
-def get_entity_info(full_path: str) -> dict | None:
+def get_entity_info(full_path: str, resolve: bool = False, all_matches: bool = False):
     conn = _open_database()
+
+    if resolve:
+        base_path = get_config(conn, "base_path") or os.getcwd()
+        ctx = create_context(base_path, conn)
+        parts = full_path.rsplit(".", 1)
+        if len(parts) != 2:
+            conn.close()
+            return [] if all_matches else None
+        module_fqn, symbol_name = parts
+        resolver = ctx.get_resolver("python")
+        result = resolver.resolve(module_fqn, symbol_name, ctx)
+        if all_matches:
+            entities = get_entities_by_ids(conn, result.resolved_ids)
+            conn.close()
+            return entities
+        entity = None
+        if result.resolved_ids:
+            entity = get_entity_by_id(conn, next(iter(result.resolved_ids)))
+        if not entity:
+            entity = get_entity_by_path(conn, full_path)
+        conn.close()
+        return entity
+
+    if all_matches:
+        results = get_entities_by_path(conn, full_path)
+        conn.close()
+        return results if results else []
+
     entity = get_entity_by_path(conn, full_path)
     conn.close()
     return entity

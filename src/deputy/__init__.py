@@ -52,24 +52,33 @@ def search(
 @app.command(name="get-info")
 def get_info(
     full_path: str = typer.Argument(..., help="Exact entity full path"),
+    resolve: bool = typer.Option(False, "--resolve", "-r", help="Resolve symbol through imports/re-exports"),
+    all_matches: bool = typer.Option(False, "--all", "-a", help="Return all matching entities (default returns only the first)"),
 ) -> None:
     try:
-        entity = get_entity_info(full_path)
+        result = get_entity_info(full_path, resolve, all_matches)
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
 
-    if entity is None:
-        console.print(f"[red]Entity not found:[/red] {full_path}")
-        raise typer.Exit()
-
-    console.print(f"[bold]Name:[/bold] {entity['name']}")
-    console.print(f"[bold]Type:[/bold] {entity['type']}")
-    console.print(f"[bold]Language:[/bold] {entity['language']}")
-    console.print(f"[bold]Full Path:[/bold] {entity['full_path']}")
-    console.print(f"[bold]File Hash:[/bold] {entity['file_hash']}")
-    console.print("[bold]Metadata:[/bold]")
-    console.print(entity["metadata_json"])
+    if all_matches:
+        if not result:
+            console.print(f"[red]Entity not found:[/red] {full_path}")
+            raise typer.Exit()
+        table = Table("Name", "Type", "Language", "Full Path")
+        for row in result:
+            table.add_row(row["name"], row["type"], row["language"], row["full_path"])
+        console.print(table)
+    else:
+        if result is None:
+            console.print(f"[red]Entity not found:[/red] {full_path}")
+            raise typer.Exit()
+        console.print(f"[bold]Name:[/bold] {result['name']}")
+        console.print(f"[bold]Type:[/bold] {result['type']}")
+        console.print(f"[bold]Language:[/bold] {result['language']}")
+        console.print(f"[bold]Full Path:[/bold] {result['full_path']}")
+        console.print("[bold]Metadata:[/bold]")
+        console.print(result["metadata_json"])
 
 def main() -> None:
     app()
