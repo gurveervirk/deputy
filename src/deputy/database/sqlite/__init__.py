@@ -17,6 +17,7 @@ from .main import (
     set_config,
     get_config,
 )
+from .serialization import entity_to_record, record_to_entity
 from .symbol_cache import SqliteSymbolCache
 from .resolver import SqlitePythonResolver
 
@@ -38,6 +39,8 @@ __all__ = [
     "get_entity_by_path",
     "set_config",
     "get_config",
+    "entity_to_record",
+    "record_to_entity",
     "SqliteSymbolCache",
     "SqlitePythonResolver",
 ]
