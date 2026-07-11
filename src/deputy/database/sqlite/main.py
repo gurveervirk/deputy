@@ -73,6 +73,31 @@ def insert_entity(
         (id, file_hash, language, full_path, name, type, metadata_json),
     )
 
+def upsert_entity(
+    conn: sqlite3.Connection,
+    id: str,
+    file_hash: str,
+    language: str,
+    full_path: str,
+    name: str,
+    type: str,
+    metadata_json: str,
+) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO entities (id, file_hash, language, full_path, name, type, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (id, file_hash, language, full_path, name, type, metadata_json),
+    )
+
+def delete_entity_by_file_hash(conn: sqlite3.Connection, file_hash: str) -> None:
+    conn.execute("DELETE FROM entities WHERE file_hash = ?", (file_hash,))
+
+def delete_entity_by_module_fqn(conn: sqlite3.Connection, module_fqn: str) -> None:
+    conn.execute(
+        "DELETE FROM entities WHERE full_path = ? OR full_path LIKE ?",
+        (module_fqn, f"{module_fqn}.%"),
+    )
+
 def search_entities(
     conn: sqlite3.Connection, pattern: str
 ) -> list[dict]:
@@ -94,6 +119,15 @@ def get_config(conn: sqlite3.Connection, key: str) -> str | None:
         (key,),
     ).fetchone()
     return row["value"] if row else None
+
+def get_entity_ids_by_fqn(
+    conn: sqlite3.Connection, fqn: str
+) -> set[str]:
+    rows = conn.execute(
+        "SELECT id FROM entities WHERE full_path = ?",
+        (fqn,),
+    ).fetchall()
+    return {row["id"] for row in rows}
 
 def get_entity_by_path(
     conn: sqlite3.Connection, full_path: str
