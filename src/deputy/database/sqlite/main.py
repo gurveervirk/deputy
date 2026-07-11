@@ -119,6 +119,38 @@ def get_entity_ids_by_fqn(
     ).fetchall()
     return {row["id"] for row in rows}
 
+def get_entity_by_id(
+    conn: sqlite3.Connection, entity_id: str
+) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM entities WHERE id = ?",
+        (entity_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+def get_entities_by_ids(
+    conn: sqlite3.Connection, entity_ids: set[str]
+) -> list[dict]:
+    if not entity_ids:
+        return []
+    placeholders = ",".join("?" for _ in entity_ids)
+    rows = conn.execute(
+        f"SELECT * FROM entities WHERE id IN ({placeholders})",
+        tuple(entity_ids),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+def get_entities_by_path(
+    conn: sqlite3.Connection, full_path: str
+) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM entities WHERE full_path = ?",
+        (full_path,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
 def get_entity_by_path(
     conn: sqlite3.Connection, full_path: str
 ) -> dict | None:
