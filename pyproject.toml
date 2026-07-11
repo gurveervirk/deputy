@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "deproc-core",
     "deproc-python",
+    "deproc-utils-tree-sitter",
     "typer>=0.26.8",
     "rich>=13.0.0",
 ]
@@ -31,3 +32,4 @@ testpaths = ["tests"]
 [tool.uv.sources]
 deproc-core = { path = "../deproc/deproc-core", editable = true }
 deproc-python = { path = "../deproc/deproc-python", editable = true }
+deproc-utils-tree-sitter = { path = "../deproc/deproc-utils-tree-sitter", editable = true }
