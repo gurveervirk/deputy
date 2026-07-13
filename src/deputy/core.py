@@ -11,6 +11,7 @@ from .database.sqlite import (
 def create_context(base_path: str, conn) -> Context:
     ctx = Context(base_path=base_path)
     ctx.set_language("python", [".py", ".pyi"], aliases=["py"])
+    ctx.set_skip_paths({".venv", ".git", "__pycache__", ".mypy_cache", ".pytest_cache", ".hg", ".svn"})
     ctx.set_parser("python", PythonSourceParser())
     ctx.set_resolver("python", SqlitePythonResolver(conn))
     ctx.set_linker("python", PythonLinker())
