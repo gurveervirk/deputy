@@ -8,6 +8,7 @@ from deputy.tools import (
     search_entities,
     get_entity_info,
 )
+from deputy.utils.config_file import read_config, write_config
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
@@ -22,9 +23,14 @@ def init(
 @app.command()
 def sync(
     force: bool = typer.Option(False, "--force", "-f", help="Force full re-sync"),
+    sync_deps: bool = typer.Option(None, "--sync-deps", help="Sync dependency packages from .venv"),
+    no_sync_deps: bool = typer.Option(None, "--no-sync-deps", help="Skip dependency sync"),
 ) -> None:
+    resolved = sync_deps
+    if no_sync_deps and resolved is None:
+        resolved = False
     try:
-        run_sync(force)
+        run_sync(force, resolved)
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
@@ -79,6 +85,22 @@ def get_info(
         console.print(f"[bold]Full Path:[/bold] {result['full_path']}")
         console.print("[bold]Metadata:[/bold]")
         console.print(result["metadata_json"])
+
+@app.command()
+def config(
+    key: str = typer.Argument(..., help="Config key"),
+    value: str = typer.Argument(None, help="Config value (omit to read)"),
+) -> None:
+    if value is None:
+        cfg = read_config()
+        if key in cfg:
+            console.print(cfg[key])
+        else:
+            console.print(f"[red]Key not found:[/red] {key}")
+            raise typer.Exit(code=1)
+    else:
+        write_config(key, value)
+        console.print(f"[green]Set[/green] {key}={value}")
 
 def main() -> None:
     app()
