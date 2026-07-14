@@ -162,3 +162,44 @@ def get_entity_by_path(
     if row is None:
         return None
     return dict(row)
+
+def delete_entities_by_package(conn: sqlite3.Connection, package_name: str) -> None:
+    conn.execute(
+        "DELETE FROM entities WHERE json_extract(metadata_json, '$.source') = 'dependency' AND json_extract(metadata_json, '$.package_name') = ?",
+        (package_name,),
+    )
+
+def upsert_dependency(
+    conn: sqlite3.Connection,
+    package_name: str,
+    version: str | None,
+    install_path: str | None,
+    package_path: str | None,
+    source: str | None,
+    metadata_json: str | None,
+    last_modified: float | None,
+) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO dependencies (package_name, version, install_path, package_path, source, metadata_json, last_modified)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (package_name, version, install_path, package_path, source, metadata_json, last_modified),
+    )
+
+def get_dependency(conn: sqlite3.Connection, package_name: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM dependencies WHERE package_name = ?",
+        (package_name,),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+def delete_dependency(conn: sqlite3.Connection, package_name: str) -> None:
+    conn.execute(
+        "DELETE FROM dependencies WHERE package_name = ?",
+        (package_name,),
+    )
+
+def list_dependencies(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute("SELECT * FROM dependencies ORDER BY package_name").fetchall()
+    return [dict(row) for row in rows]
