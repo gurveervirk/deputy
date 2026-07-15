@@ -29,9 +29,16 @@ db_path=/absolute/path/to/custom.db
 venv_path=/path/to/venv
 sync_deps=true
 max_dep_files=5000
+enable_cache=true
 ```
 
 Settings are managed with `deputy config <key> <value>`.
+
+Caching is **opt-in**. Symbol resolution results (`deputy info --resolve`) are cached in the database to speed up repeated lookups. Enable with:
+
+```bash
+deputy config enable_cache true
+```
 
 ## Commands
 
