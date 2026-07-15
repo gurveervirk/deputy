@@ -8,7 +8,6 @@ from deputy.utils.config_file import read_config
 from deputy.utils.storage import compute_sha256
 from collections import defaultdict
 
-_CONFIG_FILE = ".deputyconfig"
 _DEFAULT_DB = ".deputy.db"
 
 def _resolve_db_path() -> str:

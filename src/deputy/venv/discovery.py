@@ -1,4 +1,5 @@
 import os
+import ast
 from dataclasses import dataclass, field
 
 @dataclass
@@ -30,9 +31,9 @@ def list_installed_packages(site_packages_path: str) -> list[PackageInfo]:
     for entry in os.listdir(site_packages_path):
         if entry.endswith(".dist-info"):
             dist_path = os.path.join(site_packages_path, entry)
-            name = entry.removesuffix(".dist-info")
+            dist_info_key = entry.removesuffix(".dist-info")
             meta = _parse_metadata(os.path.join(dist_path, "METADATA"))
-            pkg_name = meta.get("Name", name)
+            pkg_name = meta.get("Name", dist_info_key)
             version = meta.get("Version", "")
 
             top_level = _parse_top_level(os.path.join(dist_path, "top_level.txt"))
@@ -53,9 +54,9 @@ def list_installed_packages(site_packages_path: str) -> list[PackageInfo]:
                     top_level_modules=top_level,
                     mtime=mtime,
                 )
-                if pkg_name in editable_map:
-                    pkg.editable_origin = editable_map[pkg_name]
-                    pkg.install_path = editable_map[pkg_name]
+                if dist_info_key in editable_map:
+                    pkg.editable_origin = editable_map[dist_info_key]
+                    pkg.install_path = editable_map[dist_info_key]
                 packages.append(pkg)
                 seen[pkg_name] = pkg
 
@@ -67,11 +68,71 @@ def _detect_editables(site_packages_path: str) -> dict[str, str]:
         if entry.endswith(".pth"):
             pth_path = os.path.join(site_packages_path, entry)
             with open(pth_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and os.path.isdir(line):
-                        result[entry.removesuffix(".pth")] = os.path.abspath(line)
+                lines = [l.strip() for l in f if l.strip()]
+            for line in lines:
+                if not line.startswith("#") and os.path.isdir(line):
+                    result[entry.removesuffix(".pth")] = os.path.abspath(line)
+                    break
+            else:
+                origin = _resolve_editable_origin(site_packages_path, entry, lines)
+                if origin:
+                    result[origin[0]] = origin[1]
     return result
+
+def _resolve_editable_origin(
+    site_packages_path: str, pth_filename: str, lines: list[str]
+) -> tuple[str, str] | None:
+    finder_name = _parse_editable_finder_name(lines)
+    if not finder_name:
+        return None
+    mapping = _parse_editable_mapping(site_packages_path, finder_name)
+    if not mapping:
+        return None
+    first_path = next(iter(mapping.values()))
+    dist_info_key = pth_filename.removeprefix("__editable__.").removesuffix(".pth")
+    return dist_info_key, first_path
+
+def _parse_editable_finder_name(lines: list[str]) -> str | None:
+    for line in lines:
+        if line.startswith("import ") and "finder" in line:
+            parts = line.split(";")[0].strip()
+            name = parts.removeprefix("import ").strip()
+            if name:
+                return name
+        elif line.startswith("from ") and "finder" in line:
+            parts = line.split("import")
+            if len(parts) >= 2:
+                return parts[-1].strip()
+    return None
+
+def _parse_editable_mapping(site_packages_path: str, finder_name: str) -> dict[str, str]:
+    finder_path = os.path.join(site_packages_path, finder_name + ".py")
+    if not os.path.exists(finder_path):
+        return {}
+    try:
+        with open(finder_path) as f:
+            tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                target = getattr(node, "target", None)
+                if target is None:
+                    continue
+                if isinstance(node, ast.Assign):
+                    targets = node.targets
+                else:
+                    targets = [target]
+                for t in targets:
+                    if isinstance(t, ast.Name) and t.id == "MAPPING" and isinstance(node.value, ast.Dict):
+                        result: dict[str, str] = {}
+                        for k, v in zip(node.value.keys, node.value.values):
+                            if isinstance(k, ast.Constant) and isinstance(v, ast.Constant):
+                                key_parts = k.value.split(".")
+                                root = os.path.abspath(os.path.join(v.value, *[".."] * len(key_parts)))
+                                result[k.value] = root
+                        return result
+    except Exception:
+        pass
+    return {}
 
 def _parse_metadata(meta_path: str) -> dict[str, str]:
     result: dict[str, str] = {}
