@@ -1,11 +1,10 @@
 import os
 import json
 import sqlite3
-from pathlib import Path
 from deproc.plugins.python.linker.models import PythonModule
 from deputy.database.sqlite import open_database
 from deputy.database.sqlite.serialization import entity_to_record
-from deputy.utils.config_file import get_config as get_file_config
+from deputy.utils.config_file import read_config
 from deputy.utils.storage import compute_sha256
 from collections import defaultdict
 
@@ -13,7 +12,7 @@ _CONFIG_FILE = ".deputyconfig"
 _DEFAULT_DB = ".deputy.db"
 
 def _resolve_db_path() -> str:
-    cfg = get_file_config()
+    cfg = read_config()
     db_path = cfg.get("db_path")
     if db_path and os.path.exists(db_path):
         return db_path

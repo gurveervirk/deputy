@@ -20,7 +20,7 @@ from deputy.database.sqlite import (
     upsert_branch_file,
     upsert_entity,
 )
-from deputy.utils.config_file import write_config, get_config as get_file_config
+from deputy.utils.config_file import write_config, read_config
 from deputy.utils.git import get_current_branch
 from deputy.utils.storage import get_source_files
 from deputy.core import create_context
@@ -105,7 +105,7 @@ def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force):
     if not sync_deps:
         return
 
-    file_config = get_file_config()
+    file_config = read_config()
     venv_path = detect_venv(base_path, file_config)
     if not venv_path:
         return
