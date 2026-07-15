@@ -57,7 +57,9 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     if not base_path:
         base_path = os.getcwd()
 
-    ctx = create_context(base_path, conn)
+    cfg = read_config()
+    enable_cache = cfg.get("enable_cache", "false") == "true"
+    ctx = create_context(base_path, conn, enable_cache=enable_cache)
     files = get_source_files(ctx)
     tracked = get_branch_files(conn, branch)
 
@@ -144,7 +146,9 @@ def get_entity_info(full_path: str, resolve: bool = False, all_matches: bool = F
 
     if resolve:
         base_path = get_config(conn, "base_path") or os.getcwd()
-        ctx = create_context(base_path, conn)
+        cfg = read_config()
+        enable_cache = cfg.get("enable_cache", "false") == "true"
+        ctx = create_context(base_path, conn, enable_cache=enable_cache)
         parts = full_path.rsplit(".", 1)
         if len(parts) != 2:
             conn.close()
