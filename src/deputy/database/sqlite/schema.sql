@@ -38,3 +38,13 @@ CREATE TABLE IF NOT EXISTS cache_module_links (
     PRIMARY KEY (module_fqn, cache_module_fqn, cache_symbol_name)
 );
 
+CREATE TABLE IF NOT EXISTS dependencies (
+    package_name  TEXT PRIMARY KEY,
+    version       TEXT,
+    install_path  TEXT,
+    package_path  TEXT,
+    source        TEXT,
+    metadata_json TEXT,
+    last_modified REAL
+);
+

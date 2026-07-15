@@ -16,4 +16,8 @@ def create_context(base_path: str, conn) -> Context:
     ctx.set_resolver("python", SqlitePythonResolver(conn))
     ctx.set_linker("python", PythonLinker())
     ctx.set_symbol_cache(SqliteSymbolCache(conn))
+    ctx.set_skip_paths({
+        "*.egg-info", "*.dist-info", "__pycache__", "node_modules", ".git",
+        ".venv", ".mypy_cache", ".pytest_cache", "build", "dist",
+    })
     return ctx

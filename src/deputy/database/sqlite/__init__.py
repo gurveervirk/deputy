@@ -16,6 +16,11 @@ from .main import (
     get_entity_by_path,
     set_config,
     get_config,
+    delete_entities_by_package,
+    upsert_dependency,
+    get_dependency,
+    delete_dependency,
+    list_dependencies,
 )
 from .serialization import entity_to_record, record_to_entity
 from .symbol_cache import SqliteSymbolCache
@@ -39,6 +44,11 @@ __all__ = [
     "get_entity_by_path",
     "set_config",
     "get_config",
+    "delete_entities_by_package",
+    "upsert_dependency",
+    "get_dependency",
+    "delete_dependency",
+    "list_dependencies",
     "entity_to_record",
     "record_to_entity",
     "SqliteSymbolCache",

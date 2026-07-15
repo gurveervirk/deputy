@@ -1,8 +1,9 @@
 import os
-from pathlib import Path
 from deputy._version import __version__
 from deputy.database.sqlite import (
     delete_branch_file,
+    delete_dependency,
+    delete_entities_by_package,
     delete_entity_by_module_fqn,
     get_branch_files,
     get_config,
@@ -11,6 +12,7 @@ from deputy.database.sqlite import (
     get_entity_by_id,
     get_entity_by_path,
     init_schema,
+    list_dependencies,
     open_database,
     search_entities as db_search_entities,
     set_config,
@@ -18,13 +20,20 @@ from deputy.database.sqlite import (
     upsert_branch_file,
     upsert_entity,
 )
+from deputy.utils.config_file import write_config, read_config
 from deputy.utils.git import get_current_branch
-from deputy.utils.storage import compute_sha256, get_source_files
+from deputy.utils.storage import get_source_files
 from deputy.core import create_context
 from deputy.tools.utils import (
+    _detect_file_changes,
     _open_database,
-    _build_module_exports,
-    _entity_record,
+    _process_files,
+)
+from deputy.venv import (
+    detect_venv,
+    find_site_packages, 
+    list_installed_packages,
+    process_dependency
 )
 
 def init_database(path: str) -> None:
@@ -35,9 +44,13 @@ def init_database(path: str) -> None:
     conn.commit()
     conn.close()
     if path != ".deputy.db":
-        Path(".deputyconfig").write_text(os.path.abspath(path))
+        write_config("db_path", os.path.abspath(path))
 
-def run_sync(force: bool) -> None:
+    venv_path = detect_venv(os.getcwd())
+    if venv_path:
+        write_config("venv_path", venv_path)
+
+def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     conn = _open_database()
     branch = get_current_branch()
     base_path = get_config(conn, "base_path")
@@ -48,22 +61,9 @@ def run_sync(force: bool) -> None:
     files = get_source_files(ctx)
     tracked = get_branch_files(conn, branch)
 
-    file_hashes: dict[str, str] = {}
-    changed: set[str] = set()
-    mtime_only: set[str] = set()
-    for fmeta in files:
-        record = tracked.get(fmeta.path)
-        if record is not None and record[1] == fmeta.mtime:
-            continue
-        abs_path = os.path.join(base_path, fmeta.path)
-        h = compute_sha256(abs_path)
-        file_hashes[fmeta.path] = h
-        if record is None or record[0] != h or force:
-            changed.add(fmeta.path)
-        else:
-            mtime_only.add(fmeta.path)
+    file_hashes, changed, mtime_only, deleted = _detect_file_changes(files, tracked, base_path, force)
 
-    deleted = set(tracked.keys()) - {f.path for f in files}
+    _sync_deps_if_needed(conn, ctx, base_path, sync_deps, force)
 
     if not changed and not deleted and not mtime_only:
         conn.close()
@@ -77,28 +77,14 @@ def run_sync(force: bool) -> None:
         conn.close()
         return
 
-    parser = ctx.get_parser("python")
-    source_files = []
-    relpath_to_fqn: dict[str, str] = {}
-    for fmeta in files:
-        abs_path = os.path.join(base_path, fmeta.path)
-        sf = parser.parse_file(abs_path, ctx)
-        source_files.append(sf)
-        relpath_to_fqn[fmeta.path] = sf.fqn
-
-    linker = ctx.get_linker("python")
-    linker.link_files(source_files, ctx)
-
-    module_exports = _build_module_exports(ctx.entity_registry)
+    records, relpath_to_fqn = _process_files(ctx, files, base_path)
 
     for p in changed:
         if p in tracked:
             delete_entity_by_module_fqn(conn, relpath_to_fqn.get(p))
 
-    for entity in list(ctx.entity_registry.values()):
-        record = _entity_record(entity, ctx.entity_registry, module_exports)
-        if record:
-            upsert_entity(conn, **record)
+    for record in records:
+        upsert_entity(conn, **record)
 
     for d in deleted:
         delete_entity_by_module_fqn(conn, relpath_to_fqn.get(d))
@@ -110,6 +96,42 @@ def run_sync(force: bool) -> None:
 
     conn.commit()
     conn.close()
+
+def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force):
+    if sync_deps_override is None:
+        sync_deps = get_config(conn, "sync_deps") == "true"
+    else:
+        sync_deps = sync_deps_override
+    if not sync_deps:
+        return
+
+    file_config = read_config()
+    venv_path = detect_venv(base_path, file_config)
+    if not venv_path:
+        return
+
+    site_packages = find_site_packages(venv_path)
+    if not site_packages:
+        return
+
+    max_files = int(file_config.get("max_dep_files", "5000"))
+    packages = list_installed_packages(site_packages)
+    tracked_deps = {p["package_name"] for p in list_dependencies(conn)}
+    current_names = set()
+    for pkg in packages:
+        current_names.add(pkg.name)
+        process_dependency(
+            pkg.name,
+            pkg.install_path,
+            pkg.top_level_modules,
+            pkg.version,
+            ctx,
+            conn,
+            max_files,
+        )
+    for name in tracked_deps - current_names:
+        delete_entities_by_package(conn, name)
+        delete_dependency(conn, name)
 
 def search_entities(pattern: str) -> list[dict]:
     conn = _open_database()
