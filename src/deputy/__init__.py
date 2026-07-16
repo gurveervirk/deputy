@@ -2,6 +2,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from deputy._version import __version__
+from deputy.logger import init_logging
 from deputy.tools import (
     init_database,
     run_sync,
@@ -12,6 +13,19 @@ from deputy.utils.config_file import read_config, write_config
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
+
+@app.callback()
+def cli_callback(
+    ctx: typer.Context,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress non-error output"),
+) -> None:
+    if verbose:
+        init_logging(level="DEBUG")
+    elif quiet:
+        init_logging(level="ERROR")
+    else:
+        init_logging()
 
 @app.command()
 def init(
