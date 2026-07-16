@@ -26,6 +26,7 @@ from deputy.utils.storage import get_source_files
 from deputy.core import create_context
 from deputy.tools.utils import (
     _detect_file_changes,
+    _is_stale,
     _open_database,
     _process_files,
 )
@@ -137,12 +138,33 @@ def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force):
 
 def search_entities(pattern: str) -> list[dict]:
     conn = _open_database()
+
+    cfg = read_config()
+    if cfg.get("auto_sync", "false") == "true":
+        branch = get_current_branch()
+        base_path = get_config(conn, "base_path") or os.getcwd()
+        try:
+            if _is_stale(conn, branch, base_path):
+                run_sync(force=False)
+        except Exception:
+            pass
+
     results = db_search_entities(conn, pattern)
     conn.close()
     return results
 
 def get_entity_info(full_path: str, resolve: bool = False, all_matches: bool = False):
     conn = _open_database()
+
+    cfg = read_config()
+    if cfg.get("auto_sync", "false") == "true":
+        branch = get_current_branch()
+        base_path = get_config(conn, "base_path") or os.getcwd()
+        try:
+            if _is_stale(conn, branch, base_path):
+                run_sync(force=False)
+        except Exception:
+            pass
 
     if resolve:
         base_path = get_config(conn, "base_path") or os.getcwd()
