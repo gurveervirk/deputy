@@ -2,10 +2,11 @@ import os
 import json
 import sqlite3
 from deproc.plugins.python.linker.models import PythonModule
-from deputy.database.sqlite import open_database
+from deputy.database.sqlite import open_database, get_branch_files
 from deputy.database.sqlite.serialization import entity_to_record
 from deputy.utils.config_file import read_config
-from deputy.utils.storage import compute_sha256
+from deputy.utils.storage import compute_sha256, get_source_files
+from deputy.core import create_context
 from collections import defaultdict
 
 _DEFAULT_DB = ".deputy.db"
@@ -98,6 +99,28 @@ def _entity_fqn(entity) -> str | None:
     if vb:
         return getattr(vb, "fqn", None)
     return None
+
+def _is_stale(conn, branch, base_path):
+
+    ctx = create_context(base_path, conn)
+    files = get_source_files(ctx)
+    tracked = get_branch_files(conn, branch)
+
+    if not tracked:
+        return True
+
+    current_paths = {f.path for f in files}
+    tracked_paths = set(tracked.keys())
+
+    if current_paths != tracked_paths:
+        return True
+
+    for fmeta in files:
+        record = tracked.get(fmeta.path)
+        if record is not None and record[1] != fmeta.mtime:
+            return True
+
+    return False
 
 def _entity_record(entity, registry, module_exports, source="project", package_name=None, is_stub=False) -> dict | None:
     record = entity_to_record(entity, module_exports=module_exports, registry=registry)

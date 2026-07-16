@@ -30,6 +30,7 @@ venv_path=/path/to/venv
 sync_deps=true
 max_dep_files=5000
 enable_cache=true
+auto_sync=true
 ```
 
 Settings are managed with `deputy config <key> <value>`.
@@ -38,6 +39,12 @@ Caching is **opt-in**. Symbol resolution results (`deputy info --resolve`) are c
 
 ```bash
 deputy config enable_cache true
+```
+
+Auto-sync is **opt-in**. When enabled, `deputy search` and `deputy info` check if source files have changed since the last sync and run a sync automatically before querying. Enable with:
+
+```bash
+deputy config auto_sync true
 ```
 
 ## Commands
