@@ -48,3 +48,11 @@ CREATE TABLE IF NOT EXISTS dependencies (
     last_modified REAL
 );
 
+CREATE TABLE IF NOT EXISTS branch_entities (
+    branch_name TEXT NOT NULL,
+    entity_id   TEXT NOT NULL,
+    PRIMARY KEY (branch_name, entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_branch_entities_entity ON branch_entities(entity_id);
+
