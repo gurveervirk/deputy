@@ -1,5 +1,10 @@
 from deputy.database.sqlite import (
+    clean_orphan_entities,
+    delete_branch_entities,
     get_branch_files,
+    get_entities_by_path,
+    get_entity_by_path,
+    upsert_branch_entities,
     upsert_branch_file,
     delete_branch_file,
     update_mtime,
@@ -8,8 +13,7 @@ from deputy.database.sqlite import (
     get_entity_ids_by_fqn,
     get_entity_by_id,
     get_entities_by_ids,
-    get_entities_by_path,
-    get_entity_by_path,
+    search_entities,
     set_config,
     get_config,
 )
@@ -111,3 +115,49 @@ class TestConfig:
         set_config(db, "key", "old")
         set_config(db, "key", "new")
         assert get_config(db, "key") == "new"
+
+class TestBranchEntities:
+    def test_upsert_and_delete(self, db):
+        upsert_branch_entities(db, "main", ["a", "b", "c"])
+        upsert_branch_entities(db, "other", ["a", "d"])
+        delete_branch_entities(db, "main")
+        rows = db.execute("SELECT * FROM branch_entities").fetchall()
+        assert len(rows) == 2
+        assert all(r["branch_name"] == "other" for r in rows)
+
+    def test_upsert_ignores_duplicates(self, db):
+        upsert_branch_entities(db, "main", ["a", "a", "b"])
+        rows = db.execute("SELECT * FROM branch_entities").fetchall()
+        assert len(rows) == 2
+
+    def test_clean_orphan_entities(self, db, sample_entities):
+        upsert_branch_entities(db, "main", ["id1", "id2"])
+        clean_orphan_entities(db)
+        remaining = {r["id"] for r in db.execute("SELECT id FROM entities").fetchall()}
+        assert remaining == {"id1", "id2"}
+
+    def test_search_scoped_by_branch(self, db, sample_entities):
+        upsert_branch_entities(db, "branch-a", ["id1", "id2"])
+        upsert_branch_entities(db, "branch-b", ["id3"])
+        results = search_entities(db, ".*")
+        assert len(results) == 5
+        results_a = search_entities(db, ".*", branch_name="branch-a")
+        assert len(results_a) == 2
+        results_b = search_entities(db, ".*", branch_name="branch-b")
+        assert len(results_b) == 1
+
+    def test_get_entity_by_path_scoped(self, db, sample_entities):
+        upsert_branch_entities(db, "branch-a", ["id5"])
+        row = get_entity_by_path(db, "pkg.mod2")
+        assert row is not None
+        row = get_entity_by_path(db, "pkg.mod2", branch_name="branch-a")
+        assert row is not None
+        row = get_entity_by_path(db, "pkg.mod2", branch_name="branch-b")
+        assert row is None
+
+    def test_get_entities_by_path_scoped(self, db, sample_entities):
+        upsert_branch_entities(db, "branch-a", ["id1"])
+        rows = get_entities_by_path(db, "pkg.mod.ClassA", branch_name="branch-a")
+        assert len(rows) == 1
+        rows = get_entities_by_path(db, "pkg.mod.ClassA", branch_name="branch-b")
+        assert len(rows) == 0
