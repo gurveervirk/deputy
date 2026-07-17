@@ -89,13 +89,24 @@ def delete_entity_by_module_fqn(conn: sqlite3.Connection, module_fqn: str) -> No
     )
 
 def search_entities(
-    conn: sqlite3.Connection, pattern: str
+    conn: sqlite3.Connection, pattern: str, branch_name: str | None = None
 ) -> list[dict]:
     # Import statements have no real fqns, so fullpath created for them appearing in output would look odd
-    rows = conn.execute(
-        "SELECT * FROM entities WHERE (full_path REGEXP ? OR name REGEXP ?) AND type != 'IMPORT_STATEMENT' ORDER BY full_path, name",
-        (pattern, pattern),
-    ).fetchall()
+    if branch_name:
+        rows = conn.execute(
+            """SELECT e.* FROM entities e
+               JOIN branch_entities be ON e.id = be.entity_id
+               WHERE be.branch_name = ?
+               AND (e.full_path REGEXP ? OR e.name REGEXP ?)
+               AND e.type != 'IMPORT_STATEMENT'
+               ORDER BY e.full_path, e.name""",
+            (branch_name, pattern, pattern),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM entities WHERE (full_path REGEXP ? OR name REGEXP ?) AND type != 'IMPORT_STATEMENT' ORDER BY full_path, name",
+            (pattern, pattern),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 def set_config(conn: sqlite3.Connection, key: str, value: str) -> None:
@@ -144,21 +155,38 @@ def get_entities_by_ids(
     return [dict(row) for row in rows]
 
 def get_entities_by_path(
-    conn: sqlite3.Connection, full_path: str
+    conn: sqlite3.Connection, full_path: str, branch_name: str | None = None
 ) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM entities WHERE full_path = ?",
-        (full_path,),
-    ).fetchall()
+    if branch_name:
+        rows = conn.execute(
+            """SELECT e.* FROM entities e
+               JOIN branch_entities be ON e.id = be.entity_id
+               WHERE be.branch_name = ? AND e.full_path = ?""",
+            (branch_name, full_path),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM entities WHERE full_path = ?",
+            (full_path,),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 def get_entity_by_path(
-    conn: sqlite3.Connection, full_path: str
+    conn: sqlite3.Connection, full_path: str, branch_name: str | None = None
 ) -> dict | None:
-    row = conn.execute(
-        "SELECT * FROM entities WHERE full_path = ? LIMIT 1",
-        (full_path,),
-    ).fetchone()
+    if branch_name:
+        row = conn.execute(
+            """SELECT e.* FROM entities e
+               JOIN branch_entities be ON e.id = be.entity_id
+               WHERE be.branch_name = ? AND e.full_path = ?
+               LIMIT 1""",
+            (branch_name, full_path),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM entities WHERE full_path = ? LIMIT 1",
+            (full_path,),
+        ).fetchone()
     if row is None:
         return None
     return dict(row)
@@ -203,3 +231,26 @@ def delete_dependency(conn: sqlite3.Connection, package_name: str) -> None:
 def list_dependencies(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM dependencies ORDER BY package_name").fetchall()
     return [dict(row) for row in rows]
+
+def upsert_branch_entities(conn: sqlite3.Connection, branch_name: str, entity_ids: list[str]) -> None:
+    if not entity_ids:
+        return
+    conn.executemany(
+        "INSERT OR IGNORE INTO branch_entities (branch_name, entity_id) VALUES (?, ?)",
+        [(branch_name, eid) for eid in entity_ids],
+    )
+
+def delete_branch_entities(conn: sqlite3.Connection, branch_name: str) -> None:
+    conn.execute("DELETE FROM branch_entities WHERE branch_name = ?", (branch_name,))
+
+def delete_branch_entities_by_entity_ids(conn: sqlite3.Connection, branch_name: str, entity_ids: list[str]) -> None:
+    if not entity_ids:
+        return
+    placeholders = ",".join("?" for _ in entity_ids)
+    conn.execute(
+        f"DELETE FROM branch_entities WHERE branch_name = ? AND entity_id IN ({placeholders})",
+        (branch_name, *entity_ids),
+    )
+
+def clean_orphan_entities(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM branch_entities)")
