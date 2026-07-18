@@ -1,4 +1,11 @@
-from deproc.core.interfaces.parser.models import FunctionLike, TypeDefinition
+import json
+from deproc.core.interfaces.parser.models import (
+    FunctionLike,
+    TypeDefinition,
+    ControlFlowBlock,
+    ControlFlowGroup,
+    SourceRange
+)
 from deproc.plugins.python.linker.models import PythonModule
 from deproc.plugins.python.parser.models import (
     PythonConstant,
@@ -157,3 +164,109 @@ class TestEntityRecord:
 
         record = _entity_record(entity, self._registry([]), {})
         assert record["language"] == "python"
+
+    def test_parent_id_in_top_level_dict(self):
+        entity = MagicMock(spec=PythonImportAlias)
+        entity.fqn = "pkg.mod.SomeName"
+        entity.alias = None
+        entity.name = "SomeName"
+        entity.parent_id = "parent123"
+
+        record = _entity_record(entity, self._registry([]), {})
+        assert record["parent_id"] == "parent123"
+        meta = json.loads(record["metadata_json"])
+        assert "parent_id" not in meta
+
+    def test_parent_id_none_when_missing(self):
+        entity = MagicMock(spec=FunctionLike)
+        entity.name = "f"
+        entity.fqn = "pkg.mod.f"
+        entity.type = "FUNCTION"
+
+        record = _entity_record(entity, self._registry([]), {})
+        assert "parent_id" in record
+
+    def test_control_flow_block(self):
+        sr = SourceRange(lineno=10, end_lineno=20, col_offset=0, end_col_offset=8)
+        cr = SourceRange(lineno=10, end_lineno=10, col_offset=3, end_col_offset=7)
+        entity = ControlFlowBlock(
+            id="cfb1",
+            parent_id="parent1",
+            branch="if",
+            source_range=sr,
+            condition_range=cr,
+        )
+
+        record = _entity_record(entity, {}, {})
+        assert record["type"] == "CONTROL_FLOW_BLOCK"
+        assert record["name"] == "if"
+        assert record["parent_id"] == "parent1"
+        meta = json.loads(record["metadata_json"])
+        assert meta["condition_lineno"] == 10
+        assert meta["condition_col_offset"] == 3
+
+    def test_control_flow_block_no_condition(self):
+        sr = SourceRange(lineno=30, end_lineno=35, col_offset=0, end_col_offset=4)
+        entity = ControlFlowBlock(
+            id="cfb2",
+            parent_id="parent2",
+            branch="else",
+            source_range=sr,
+            condition_range=None,
+        )
+
+        record = _entity_record(entity, {}, {})
+        assert record["type"] == "CONTROL_FLOW_BLOCK"
+        assert record["name"] == "else"
+        meta = json.loads(record["metadata_json"])
+        assert "condition_lineno" not in meta
+
+    def test_control_flow_group(self):
+        sr = SourceRange(lineno=5, end_lineno=25, col_offset=0, end_col_offset=2)
+        entity = ControlFlowGroup(
+            id="cfg1",
+            parent_id="parent0",
+            group_type="if_statement",
+            source_range=sr,
+        )
+
+        record = _entity_record(entity, {}, {})
+        assert record["type"] == "CONTROL_FLOW_GROUP"
+        assert record["name"] == "if_statement"
+        assert record["parent_id"] == "parent0"
+
+    def test_control_flow_block_with_registry_fallback(self):
+        sr = SourceRange(lineno=10, end_lineno=20, col_offset=0, end_col_offset=8)
+        group_sr = SourceRange(lineno=5, end_lineno=25, col_offset=0, end_col_offset=2)
+        group = ControlFlowGroup(
+            id="grp1",
+            parent_id=None,
+            group_type="if_statement",
+            source_range=group_sr,
+        )
+        block = ControlFlowBlock(
+            id="cfb3",
+            parent_id="grp1",
+            branch="if",
+            source_range=sr,
+            condition_range=None,
+        )
+
+        registry = {"grp1": group, "cfb3": block}
+        record = _entity_record(block, registry, {})
+        assert "__branch__" in record["full_path"]
+        assert "if" in record["full_path"]
+
+    def test_control_flow_group_with_registry_fallback(self):
+        sr = SourceRange(lineno=1, end_lineno=30, col_offset=0, end_col_offset=2)
+        group = ControlFlowGroup(
+            id="cfg2",
+            parent_id=None,
+            group_type="if_statement",
+            source_range=sr,
+        )
+
+        registry = {"cfg2": group}
+        record = _entity_record(group, registry, {})
+        assert "__group__" in record["full_path"]
+        assert "if_statement" in record["full_path"]
