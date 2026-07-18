@@ -33,6 +33,7 @@ enable_cache=true
 auto_sync=true
 log_level=WARNING
 log_file=/path/to/deputy.log
+display_mode=table
 ```
 
 Settings are managed with `deputy config <key> <value>`.
@@ -47,6 +48,13 @@ Auto-sync is **opt-in**. When enabled, `deputy search` and `deputy info` check i
 
 ```bash
 deputy config auto_sync true
+```
+
+Display mode for search results is configured via `.deputyconfig`:
+
+```bash
+deputy config display_mode tree      # tree grouped by hierarchy
+deputy config display_mode table     # tabular (default)
 ```
 
 ## Logging
@@ -98,9 +106,40 @@ The following directories and patterns are excluded from discovery and linking:
 - `.git/`, `.venv/`, `.mypy_cache/`, `.pytest_cache/`
 - `build/`, `dist/`
 
-### `deputy search <regex>`
+### `deputy search [options] <regex>`
 
-Queries the database for entities whose `full_path` or `name` matches the regex pattern. Returns a table of Name, Type, Language, and Full Path.
+Queries the database for entities whose `full_path` or `name` matches the regex pattern. Supports display filters and output modes.
+
+**Filter options:**
+
+| Flag | Description |
+|------|-------------|
+| `--type` / `-t TEXT` | Filter by entity type (repeatable: `FUNCTION`, `CLASS`, `MODULE`, `PACKAGE`, `CONSTANT`, `TYPE_ALIAS`, `IMPORT_ALIAS`) |
+| `--language` / `-l TEXT` | Filter by language (e.g. `python`) |
+| `--limit INT` | Max results |
+| `--offset INT` | Result offset |
+| `--exact` / `-e` | Exact match on `full_path` (no regex) |
+| `--name-only` / `-n` | Match name only, not `full_path` |
+
+**Display modes:**
+
+Controlled by `display_mode` config key in `.deputyconfig`:
+- `table` (default) — `rich.table.Table` with columns Name, Type, Language, Full Path
+- `tree` — `rich.tree.Tree` grouped by package→module→entity hierarchy
+
+In tree mode, the `--fqn` / `-f` flag appends the full path to each entry:
+
+```bash
+deputy search "detect_venv" --fqn
+# Entities
+# └── src
+#     └── deputy
+#         └── venv
+#             └── detect
+#                 └── FUNCTION detect_venv src.deputy.venv.detect.detect_venv
+```
+
+The hierarchy is derived from dot-separated `full_path` values, not from entity types — so filters like `--type` preserve the tree structure.
 
 ### `deputy info <full-path> [--resolve] [--all]`
 
@@ -123,6 +162,7 @@ Default location is `.deputy.db` in the project root. A custom location is persi
 | Table | Purpose |
 |---|---|
 | `entities` | Parsed symbols — id, language, full_path, name, type, metadata_json |
+| `branch_entities` | Branch-to-entity mapping for cross-branch entity sharing |
 | `branch_files` | Per-branch file tracking — content hash and mtime for incremental sync |
 | `cache_entries` | Resolved symbol cache per (module_fqn, symbol_name) |
 | `cache_module_links` | Cross-module cache linkage for invalidation |
