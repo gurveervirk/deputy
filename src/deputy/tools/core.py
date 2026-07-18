@@ -8,8 +8,10 @@ from deputy.database.sqlite import (
     delete_entities_by_package,
     get_branch_files,
     get_config,
+    get_dependency,
     get_entities_by_ids,
     get_entities_by_path,
+    get_dependency_entity_ids,
     get_entity_by_id,
     get_entity_by_path,
     init_schema,
@@ -68,12 +70,9 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
 
     file_hashes, changed, mtime_only, deleted = _detect_file_changes(files, tracked, base_path, force)
 
-    dep_ids = _sync_deps_if_needed(conn, ctx, base_path, sync_deps, force)
+    dep_ids = _sync_deps_if_needed(conn, ctx, base_path, sync_deps, force, branch)
 
     if not changed and not deleted and not mtime_only:
-        if dep_ids:
-            upsert_branch_entities(conn, branch, dep_ids)
-            conn.commit()
         conn.close()
         return
 
@@ -81,8 +80,6 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
         for fmeta in files:
             if fmeta.path in mtime_only:
                 update_mtime(conn, branch, fmeta.path, fmeta.mtime)
-        if dep_ids:
-            upsert_branch_entities(conn, branch, dep_ids)
         conn.commit()
         conn.close()
         return
@@ -109,7 +106,7 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     conn.commit()
     conn.close()
 
-def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force) -> list[str]:
+def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force, branch) -> list[str]:
     if sync_deps_override is None:
         sync_deps = get_config(conn, "sync_deps") == "true"
     else:
@@ -133,6 +130,15 @@ def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force) -> lis
     all_ids: list[str] = []
     for pkg in packages:
         current_names.add(pkg.name)
+        tracked = get_dependency(conn, pkg.name)
+        if (
+            tracked
+            and tracked["version"] == pkg.version
+            and tracked.get("last_modified") == pkg.mtime
+        ):
+            existing = get_dependency_entity_ids(conn, branch, pkg.name)
+            all_ids.extend(existing)
+            continue
         ids = process_dependency(
             pkg.name,
             pkg.install_path,
