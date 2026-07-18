@@ -1,6 +1,8 @@
 import typer
+from dataclasses import dataclass, field
 from rich.console import Console
 from rich.table import Table
+from rich.tree import Tree
 from deputy._version import __version__
 from deputy.logger import init_logging
 from deputy.tools import (
@@ -53,9 +55,23 @@ def sync(
 @app.command(name="search")
 def search(
     pattern: str = typer.Argument(..., help="Regular expression pattern"),
+    type_filter: list[str] = typer.Option(None, "--type", "-t", help="Filter by entity type (repeatable)"),
+    language: str = typer.Option(None, "--language", "-l", help="Filter by language"),
+    limit: int = typer.Option(None, "--limit", help="Max results"),
+    offset: int = typer.Option(0, "--offset", help="Result offset"),
+    exact: bool = typer.Option(False, "--exact", "-e", help="Exact match on full_path"),
+    name_only: bool = typer.Option(False, "--name-only", "-n", help="Match name only, not full_path"),
 ) -> None:
     try:
-        results = search_entities(pattern)
+        results = search_entities(
+            pattern,
+            type_filter=type_filter,
+            language=language,
+            limit=limit,
+            offset=offset,
+            exact=exact,
+            name_only=name_only,
+        )
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
@@ -64,10 +80,17 @@ def search(
         console.print("[yellow]No matching entities found[/yellow]")
         raise typer.Exit()
 
-    table = Table("Name", "Type", "Language", "Full Path")
-    for row in results:
-        table.add_row(row["name"], row["type"], row["language"], row["full_path"])
-    console.print(table)
+    cfg = read_config()
+    display_mode = cfg.get("display_mode", "table")
+
+    if display_mode == "tree":
+        tree = _build_entity_tree(results)
+        console.print(tree)
+    else:
+        table = Table("Name", "Type", "Language", "Full Path")
+        for row in results:
+            table.add_row(row["name"], row["type"], row["language"], row["full_path"])
+        console.print(table)
 
 @app.command(name="info")
 def get_info(
@@ -115,6 +138,37 @@ def config(
     else:
         write_config(key, value)
         console.print(f"[green]Set[/green] {key}={value}")
+
+@dataclass
+class _EntityTreeNode:
+    entities: list[str] = field(default_factory=list)
+    children: dict[str, "_EntityTreeNode"] = field(default_factory=dict)
+
+
+def _build_entity_tree(results: list[dict]) -> Tree:
+    root = _EntityTreeNode()
+    for row in results:
+        parts = row["full_path"].split(".")
+        label = f"[bold]{row['type']}[/bold] {row['name']}"
+        node = root
+        for part in parts[:-1]:
+            if part not in node.children:
+                node.children[part] = _EntityTreeNode()
+            node = node.children[part]
+        node.entities.append(label)
+
+    tree = Tree("Entities")
+    _add_tree_node(tree, root)
+    return tree
+
+
+def _add_tree_node(parent: Tree, node: _EntityTreeNode) -> None:
+    for label in node.entities:
+        parent.add(label)
+    for key, child in sorted(node.children.items()):
+        branch = parent.add(f"[dim]{key}[/dim]")
+        _add_tree_node(branch, child)
+
 
 def main() -> None:
     app()

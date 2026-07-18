@@ -93,24 +93,64 @@ def delete_entity_by_module_fqn(conn: sqlite3.Connection, module_fqn: str) -> No
     )
 
 def search_entities(
-    conn: sqlite3.Connection, pattern: str, branch_name: str | None = None
+    conn: sqlite3.Connection,
+    pattern: str,
+    branch_name: str | None = None,
+    type_filter: list[str] | None = None,
+    language: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    exact: bool = False,
+    name_only: bool = False,
 ) -> list[dict]:
-    # Import statements have no real fqns, so fullpath created for them appearing in output would look odd
+    parts: list[str] = []
+    params: list = []
+
     if branch_name:
-        rows = conn.execute(
-            """SELECT e.* FROM entities e
-               JOIN branch_entities be ON e.id = be.entity_id
-               WHERE be.branch_name = ?
-               AND (e.full_path REGEXP ? OR e.name REGEXP ?)
-               AND e.type != 'IMPORT_STATEMENT'
-               ORDER BY e.full_path, e.name""",
-            (branch_name, pattern, pattern),
-        ).fetchall()
+        parts.append("be.branch_name = ?")
+        params.append(branch_name)
+
+    col = "e." if branch_name else ""
+    if exact:
+        parts.append(f"{col}full_path = ?")
+        params.append(pattern)
+    elif name_only:
+        parts.append(f"{col}name REGEXP ?")
+        params.append(pattern)
     else:
-        rows = conn.execute(
-            "SELECT * FROM entities WHERE (full_path REGEXP ? OR name REGEXP ?) AND type != 'IMPORT_STATEMENT' ORDER BY full_path, name",
-            (pattern, pattern),
-        ).fetchall()
+        parts.append(f"({col}full_path REGEXP ? OR {col}name REGEXP ?)")
+        params.extend([pattern, pattern])
+
+    parts.append(f"{col}type != 'IMPORT_STATEMENT'")
+
+    if type_filter:
+        placeholders = ",".join("?" for _ in type_filter)
+        parts.append(f"{col}type IN ({placeholders})")
+        params.extend(type_filter)
+
+    if language:
+        parts.append(f"{col}language = ?")
+        params.append(language)
+
+    where = " AND ".join(parts)
+
+    if branch_name:
+        sql = f"""SELECT e.* FROM entities e
+                  JOIN branch_entities be ON e.id = be.entity_id
+                  WHERE {where}
+                  ORDER BY e.full_path, e.name"""
+    else:
+        sql = f"SELECT * FROM entities WHERE {where} ORDER BY full_path, name"
+
+    if limit is not None or offset:
+        limit_val = limit if limit is not None else -1
+        sql += " LIMIT ?"
+        params.append(limit_val)
+    if offset:
+        sql += " OFFSET ?"
+        params.append(offset)
+
+    rows = conn.execute(sql, params).fetchall()
     return [dict(row) for row in rows]
 
 def set_config(conn: sqlite3.Connection, key: str, value: str) -> None:

@@ -179,7 +179,15 @@ def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force, branch
     logger.info("dependency sync complete — %d packages synced", len(packages))
     return all_ids
 
-def search_entities(pattern: str) -> list[dict]:
+def search_entities(
+    pattern: str,
+    type_filter: list[str] | None = None,
+    language: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    exact: bool = False,
+    name_only: bool = False,
+) -> list[dict]:
     conn = _open_database()
     branch = get_current_branch()
 
@@ -194,7 +202,12 @@ def search_entities(pattern: str) -> list[dict]:
         except Exception:
             logger.warning("auto_sync check failed, proceeding with existing data", exc_info=True)
 
-    results = db_search_entities(conn, pattern, branch_name=branch)
+    results = db_search_entities(
+        conn, pattern, branch_name=branch,
+        type_filter=type_filter, language=language,
+        limit=limit, offset=offset,
+        exact=exact, name_only=name_only,
+    )
     logger.debug("search for %q returned %d results", pattern, len(results))
     conn.close()
     return results
