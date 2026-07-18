@@ -161,3 +161,60 @@ class TestBranchEntities:
         assert len(rows) == 1
         rows = get_entities_by_path(db, "pkg.mod.ClassA", branch_name="branch-b")
         assert len(rows) == 0
+
+class TestSearchFilters:
+    def test_type_filter(self, db, sample_entities):
+        results = search_entities(db, ".*", type_filter=["CLASS"])
+        assert all(r["type"] == "CLASS" for r in results)
+        assert len(results) == 2
+
+    def test_type_filter_multiple(self, db, sample_entities):
+        results = search_entities(db, ".*", type_filter=["CLASS", "FUNCTION"])
+        types = {r["type"] for r in results}
+        assert types == {"CLASS", "FUNCTION"}
+
+    def test_language_filter(self, db, sample_entities):
+        results = search_entities(db, ".*", language="python")
+        assert len(results) == 5
+
+    def test_language_filter_no_match(self, db, sample_entities):
+        results = search_entities(db, ".*", language="rust")
+        assert len(results) == 0
+
+    def test_limit(self, db, sample_entities):
+        results = search_entities(db, ".*", limit=2)
+        assert len(results) == 2
+
+    def test_offset(self, db, sample_entities):
+        all_results = search_entities(db, ".*")
+        offset_results = search_entities(db, ".*", offset=2)
+        assert len(offset_results) == len(all_results) - 2
+        assert offset_results[0]["id"] == all_results[2]["id"]
+
+    def test_exact_match(self, db, sample_entities):
+        results = search_entities(db, "pkg.mod.ClassA", exact=True)
+        assert len(results) == 1
+        assert results[0]["full_path"] == "pkg.mod.ClassA"
+
+    def test_exact_match_no_results(self, db, sample_entities):
+        results = search_entities(db, "pkg.mod.Class", exact=True)
+        assert len(results) == 0
+
+    def test_name_only(self, db, sample_entities):
+        results = search_entities(db, "func", name_only=True)
+        assert len(results) == 1
+        assert results[0]["name"] == "func"
+
+    def test_name_only_no_full_path_match(self, db, sample_entities):
+        results = search_entities(db, "pkg\\.mod", name_only=True)
+        assert len(results) == 0
+
+    def test_type_and_language_combined(self, db, sample_entities):
+        results = search_entities(db, ".*", type_filter=["CLASS"], language="python")
+        assert len(results) == 2
+
+    def test_with_branch_scope(self, db, sample_entities):
+        upsert_branch_entities(db, "feature", ["id1", "id5"])
+        results = search_entities(db, "ClassA", branch_name="feature", type_filter=["CLASS"])
+        assert len(results) == 1
+        assert results[0]["id"] == "id1"

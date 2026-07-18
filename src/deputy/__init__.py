@@ -4,6 +4,7 @@ from rich.table import Table
 from deputy._version import __version__
 from deputy.logger import init_logging
 from deputy.tools import (
+    build_entity_tree,
     init_database,
     run_sync,
     search_entities,
@@ -53,9 +54,24 @@ def sync(
 @app.command(name="search")
 def search(
     pattern: str = typer.Argument(..., help="Regular expression pattern"),
+    type_filter: list[str] = typer.Option(None, "--type", "-t", help="Filter by entity type (repeatable)"),
+    language: str = typer.Option(None, "--language", "-l", help="Filter by language"),
+    limit: int = typer.Option(None, "--limit", help="Max results"),
+    offset: int = typer.Option(0, "--offset", help="Result offset"),
+    exact: bool = typer.Option(False, "--exact", "-e", help="Exact match on full_path"),
+    name_only: bool = typer.Option(False, "--name-only", "-n", help="Match name only, not full_path"),
+    show_fqn: bool = typer.Option(False, "--fqn", "-f", help="Show full path in tree output"),
 ) -> None:
     try:
-        results = search_entities(pattern)
+        results = search_entities(
+            pattern,
+            type_filter=type_filter,
+            language=language,
+            limit=limit,
+            offset=offset,
+            exact=exact,
+            name_only=name_only,
+        )
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
@@ -64,10 +80,17 @@ def search(
         console.print("[yellow]No matching entities found[/yellow]")
         raise typer.Exit()
 
-    table = Table("Name", "Type", "Language", "Full Path")
-    for row in results:
-        table.add_row(row["name"], row["type"], row["language"], row["full_path"])
-    console.print(table)
+    cfg = read_config()
+    display_mode = cfg.get("display_mode", "table")
+
+    if display_mode == "tree":
+        tree = build_entity_tree(results, show_fqn=show_fqn)
+        console.print(tree)
+    else:
+        table = Table("Name", "Type", "Language", "Full Path")
+        for row in results:
+            table.add_row(row["name"], row["type"], row["language"], row["full_path"])
+        console.print(table)
 
 @app.command(name="info")
 def get_info(
