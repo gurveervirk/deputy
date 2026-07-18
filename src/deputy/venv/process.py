@@ -17,7 +17,7 @@ def process_dependency(
     template_ctx: Context,
     conn,
     max_files: int = 5000,
-) -> None:
+) -> list[str]:
     all_entities: list[dict] = []
     total_files = 0
 
@@ -46,8 +46,10 @@ def process_dependency(
         all_entities.extend(records)
 
     db_delete_entities_by_package(conn, package_name)
+    entity_ids: list[str] = []
     for record in all_entities:
         upsert_entity(conn, **record)
+        entity_ids.append(record["id"])
 
     upsert_dependency(
         conn,
@@ -59,3 +61,5 @@ def process_dependency(
         metadata_json=None,
         last_modified=os.path.getmtime(install_path) if os.path.exists(install_path) else None,
     )
+
+    return entity_ids
