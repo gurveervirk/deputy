@@ -79,11 +79,12 @@ def upsert_entity(
     name: str,
     type: str,
     metadata_json: str,
+    parent_id: str | None = None,
 ) -> None:
     conn.execute(
-        """INSERT OR REPLACE INTO entities (id, language, full_path, name, type, metadata_json)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (id, language, full_path, name, type, metadata_json),
+        """INSERT OR REPLACE INTO entities (id, language, full_path, name, type, metadata_json, parent_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (id, language, full_path, name, type, metadata_json, parent_id),
     )
 
 def delete_entity_by_module_fqn(conn: sqlite3.Connection, module_fqn: str) -> None:
@@ -121,7 +122,7 @@ def search_entities(
         parts.append(f"({col}full_path REGEXP ? OR {col}name REGEXP ?)")
         params.extend([pattern, pattern])
 
-    parts.append(f"{col}type != 'IMPORT_STATEMENT'")
+    parts.append(f"{col}type NOT IN ('IMPORT_STATEMENT', 'CONTROL_FLOW_BLOCK', 'CONTROL_FLOW_GROUP')")
 
     if type_filter:
         placeholders = ",".join("?" for _ in type_filter)

@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 from deproc.core.interfaces.parser.models import (
+    ControlFlowBlock,
+    ControlFlowGroup,
     Entity,
     FunctionLike,
     SourceRange,
@@ -31,11 +33,26 @@ TYPE_TO_CLASS = {
     "MODULE": PythonModule,
     "PACKAGE": PythonPackage,
     "NAMESPACE_PACKAGE": PythonNamespacePackage,
+    "CONTROL_FLOW_BLOCK": ControlFlowBlock,
+    "CONTROL_FLOW_GROUP": ControlFlowGroup,
 }
 
 def _module_fqn(full_path: str) -> str | None:
     parts = full_path.rsplit(".", 1)
     return parts[0] if len(parts) > 1 else None
+
+def _get_module_fqn_from_registry(entity_id: str, registry: dict) -> str | None:
+    seen: set[str] = set()
+    current = entity_id
+    while current and current not in seen:
+        seen.add(current)
+        entity = registry.get(current)
+        if entity is None:
+            break
+        if hasattr(entity, "fqn") and entity.fqn:
+            return entity.fqn
+        current = getattr(entity, "parent_id", None)
+    return None
 
 def entity_to_record(entity, language: str = "python", module_exports: dict[str, set[str]] | None = None, registry=None) -> dict | None:
     if isinstance(entity, PythonImportAlias):
@@ -72,6 +89,20 @@ def entity_to_record(entity, language: str = "python", module_exports: dict[str,
         name = entity.name
         full_path = entity.fqn
         entity_type = entity.type
+    elif isinstance(entity, ControlFlowBlock):
+        name = entity.branch
+        entity_type = "CONTROL_FLOW_BLOCK"
+        module_fqn = None
+        if entity.parent_id and registry:
+            module_fqn = _get_module_fqn_from_registry(entity.parent_id, registry)
+        full_path = f"{module_fqn}.__branch__.{entity.branch}.{entity.source_range.lineno}" if module_fqn else f"__branch__.{entity.branch}.{entity.source_range.lineno}"
+    elif isinstance(entity, ControlFlowGroup):
+        name = entity.group_type
+        entity_type = "CONTROL_FLOW_GROUP"
+        module_fqn = None
+        if entity.parent_id and registry:
+            module_fqn = _get_module_fqn_from_registry(entity.parent_id, registry)
+        full_path = f"{module_fqn}.__group__.{entity.group_type}.{entity.source_range.lineno}" if module_fqn else f"__group__.{entity.group_type}.{entity.source_range.lineno}"
     else:
         return None
 
@@ -89,14 +120,24 @@ def entity_to_record(entity, language: str = "python", module_exports: dict[str,
         metadata["original_name"] = entity.name
         if entity.alias:
             metadata["alias"] = entity.alias
-        if entity.parent_id:
-            metadata["parent_id"] = entity.parent_id
     if isinstance(entity, PythonImportStatement):
         metadata["import_type"] = entity.type
         metadata["wildcard"] = entity.wildcard
         metadata["name_ids"] = entity.name_ids
-        if entity.parent_id:
-            metadata["parent_id"] = entity.parent_id
+    if isinstance(entity, ControlFlowBlock):
+        if entity.condition_range:
+            cr = entity.condition_range
+            metadata["condition_lineno"] = cr.lineno
+            metadata["condition_end_lineno"] = cr.end_lineno
+            metadata["condition_col_offset"] = cr.col_offset
+            metadata["condition_end_col_offset"] = cr.end_col_offset
+        metadata["import_stmt_ids"] = entity.import_stmt_ids
+        metadata["type_ids"] = entity.type_ids
+        metadata["function_ids"] = entity.function_ids
+        metadata["variable_ids"] = entity.variable_ids
+        metadata["nested_group_ids"] = entity.nested_group_ids
+    if isinstance(entity, ControlFlowGroup):
+        metadata["block_ids"] = entity.block_ids
     if hasattr(entity, "fqn") and entity.fqn:
         metadata["fqn"] = entity.fqn
     if hasattr(entity, "path"):
@@ -117,6 +158,7 @@ def entity_to_record(entity, language: str = "python", module_exports: dict[str,
         "name": name,
         "type": entity_type,
         "metadata_json": json.dumps(metadata, default=str),
+        "parent_id": getattr(entity, "parent_id", None),
     }
 
 def record_to_entity(record: dict) -> Entity | None:
@@ -134,16 +176,16 @@ def record_to_entity(record: dict) -> Entity | None:
         "id": record["id"],
         "fqn": meta.get("fqn") or record["full_path"],
     }
+    parent_id = record.get("parent_id") or meta.get("parent_id")
     if entity_class is PythonImportAlias:
         return PythonImportAlias(
             name=meta.get("original_name", ""),
             alias=meta.get("alias"),
-            parent_id=meta.get("parent_id"),
+            parent_id=parent_id,
             source_range=sr,
             **common,
         )
     if entity_class is PythonImportStatement:
-        parent_id = meta.get("parent_id")
         return PythonImportStatement(
             path=record["name"],
             type=meta.get("import_type", ""),
@@ -200,4 +242,33 @@ def record_to_entity(record: dict) -> Entity | None:
         return PythonConstant(source_range=sr, **null_fields, **common)
     if entity_class is PythonTypeAlias:
         return PythonTypeAlias(source_range=sr, **null_fields, **common)
+    if entity_class is ControlFlowBlock:
+        condition_range = None
+        if "condition_lineno" in meta:
+            condition_range = SourceRange(
+                lineno=meta["condition_lineno"],
+                end_lineno=meta["condition_end_lineno"],
+                col_offset=meta["condition_col_offset"],
+                end_col_offset=meta["condition_end_col_offset"],
+            )
+        return ControlFlowBlock(
+            id=record["id"],
+            parent_id=parent_id,
+            branch=record["name"],
+            source_range=sr,
+            condition_range=condition_range,
+            import_stmt_ids=meta.get("import_stmt_ids", []),
+            type_ids=meta.get("type_ids", []),
+            function_ids=meta.get("function_ids", []),
+            variable_ids=meta.get("variable_ids", []),
+            nested_group_ids=meta.get("nested_group_ids", []),
+        )
+    if entity_class is ControlFlowGroup:
+        return ControlFlowGroup(
+            id=record["id"],
+            parent_id=parent_id,
+            group_type=record["name"],
+            source_range=sr,
+            block_ids=meta.get("block_ids", []),
+        )
     return None
