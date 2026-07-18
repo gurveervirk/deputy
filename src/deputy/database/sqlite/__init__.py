@@ -24,6 +24,7 @@ from .main import (
     upsert_branch_entities,
     delete_branch_entities,
     delete_branch_entities_by_entity_ids,
+    get_dependency_entity_ids,
     clean_orphan_entities,
 )
 from .serialization import entity_to_record, record_to_entity
@@ -56,6 +57,7 @@ __all__ = [
     "upsert_branch_entities",
     "delete_branch_entities",
     "delete_branch_entities_by_entity_ids",
+    "get_dependency_entity_ids",
     "clean_orphan_entities",
     "entity_to_record",
     "record_to_entity",

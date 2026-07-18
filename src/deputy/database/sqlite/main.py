@@ -240,6 +240,17 @@ def upsert_branch_entities(conn: sqlite3.Connection, branch_name: str, entity_id
         [(branch_name, eid) for eid in entity_ids],
     )
 
+def get_dependency_entity_ids(conn: sqlite3.Connection, branch_name: str, package_name: str) -> list[str]:
+    rows = conn.execute(
+        """SELECT be.entity_id FROM branch_entities be
+           JOIN entities e ON be.entity_id = e.id
+           WHERE be.branch_name = ?
+           AND json_extract(e.metadata_json, '$.source') = 'dependency'
+           AND json_extract(e.metadata_json, '$.package_name') = ?""",
+        (branch_name, package_name),
+    ).fetchall()
+    return [r["entity_id"] for r in rows]
+
 def delete_branch_entities(conn: sqlite3.Connection, branch_name: str) -> None:
     conn.execute("DELETE FROM branch_entities WHERE branch_name = ?", (branch_name,))
 
