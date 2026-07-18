@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+from dataclasses import dataclass, field
 from deproc.plugins.python.linker.models import PythonModule
 from deputy.database.sqlite import open_database, get_branch_files
 from deputy.database.sqlite.serialization import entity_to_record
@@ -9,6 +10,7 @@ from deputy.utils.config_file import read_config
 from deputy.utils.storage import compute_sha256, get_source_files
 from deputy.core import create_context
 from collections import defaultdict
+from rich.tree import Tree
 
 logger = get_logger("tools.utils")
 
@@ -137,6 +139,53 @@ def _is_stale(conn, branch, base_path):
 
     logger.debug("stale check: up to date")
     return False
+
+@dataclass
+class _EntityTreeNode:
+    label: str | None = None
+    entities: list[str] = field(default_factory=list)
+    children: dict[str, "_EntityTreeNode"] = field(default_factory=dict)
+
+def build_entity_tree(results: list[dict], show_fqn: bool = False) -> Tree:
+    root = _EntityTreeNode()
+
+    seen: set[tuple[str, ...]] = set()
+    for row in results:
+        parts = row["full_path"].split(".")
+        for i in range(len(parts)):
+            seen.add(tuple(parts[:i]))
+    for path_parts in seen:
+        node = root
+        for part in path_parts:
+            if part not in node.children:
+                node.children[part] = _EntityTreeNode()
+            node = node.children[part]
+
+    for row in results:
+        parts = row["full_path"].split(".")
+        label = f"[bold]{row['type']}[/bold] {row['name']}"
+        if show_fqn:
+            label += f" [dim]{row['full_path']}[/dim]"
+        *parent_parts, last = parts
+        node = root
+        for part in parent_parts:
+            node = node.children[part]
+        if last in node.children and node.children[last].label is None:
+            node.children[last].label = label
+        else:
+            node.entities.append(label)
+
+    tree = Tree("Entities")
+    _add_tree_node(tree, root)
+    return tree
+
+def _add_tree_node(parent: Tree, node: _EntityTreeNode) -> None:
+    for label in node.entities:
+        parent.add(label)
+    for key, child in sorted(node.children.items()):
+        branch_label = child.label if child.label else f"[dim]{key}[/dim]"
+        branch = parent.add(branch_label)
+        _add_tree_node(branch, child)
 
 def _entity_record(entity, registry, module_exports, source="project", package_name=None, is_stub=False) -> dict | None:
     record = entity_to_record(entity, module_exports=module_exports, registry=registry)

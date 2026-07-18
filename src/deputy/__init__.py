@@ -1,11 +1,10 @@
 import typer
-from dataclasses import dataclass, field
 from rich.console import Console
 from rich.table import Table
-from rich.tree import Tree
 from deputy._version import __version__
 from deputy.logger import init_logging
 from deputy.tools import (
+    build_entity_tree,
     init_database,
     run_sync,
     search_entities,
@@ -61,6 +60,7 @@ def search(
     offset: int = typer.Option(0, "--offset", help="Result offset"),
     exact: bool = typer.Option(False, "--exact", "-e", help="Exact match on full_path"),
     name_only: bool = typer.Option(False, "--name-only", "-n", help="Match name only, not full_path"),
+    show_fqn: bool = typer.Option(False, "--fqn", "-f", help="Show full path in tree output"),
 ) -> None:
     try:
         results = search_entities(
@@ -84,7 +84,7 @@ def search(
     display_mode = cfg.get("display_mode", "table")
 
     if display_mode == "tree":
-        tree = _build_entity_tree(results)
+        tree = build_entity_tree(results, show_fqn=show_fqn)
         console.print(tree)
     else:
         table = Table("Name", "Type", "Language", "Full Path")
@@ -138,37 +138,6 @@ def config(
     else:
         write_config(key, value)
         console.print(f"[green]Set[/green] {key}={value}")
-
-@dataclass
-class _EntityTreeNode:
-    entities: list[str] = field(default_factory=list)
-    children: dict[str, "_EntityTreeNode"] = field(default_factory=dict)
-
-
-def _build_entity_tree(results: list[dict]) -> Tree:
-    root = _EntityTreeNode()
-    for row in results:
-        parts = row["full_path"].split(".")
-        label = f"[bold]{row['type']}[/bold] {row['name']}"
-        node = root
-        for part in parts[:-1]:
-            if part not in node.children:
-                node.children[part] = _EntityTreeNode()
-            node = node.children[part]
-        node.entities.append(label)
-
-    tree = Tree("Entities")
-    _add_tree_node(tree, root)
-    return tree
-
-
-def _add_tree_node(parent: Tree, node: _EntityTreeNode) -> None:
-    for label in node.entities:
-        parent.add(label)
-    for key, child in sorted(node.children.items()):
-        branch = parent.add(f"[dim]{key}[/dim]")
-        _add_tree_node(branch, child)
-
 
 def main() -> None:
     app()
