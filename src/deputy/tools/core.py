@@ -1,4 +1,5 @@
 import os
+from rich.console import Console
 from deputy._version import __version__
 from deputy.database.sqlite import (
     clean_orphan_entities,
@@ -24,6 +25,7 @@ from deputy.database.sqlite import (
     upsert_branch_file,
     upsert_entity,
 )
+from deputy.logger import get_logger
 from deputy.utils.config_file import write_config, read_config
 from deputy.utils.git import get_current_branch
 from deputy.utils.storage import get_source_files
@@ -40,6 +42,9 @@ from deputy.venv import (
     list_installed_packages,
     process_dependency
 )
+
+logger = get_logger("tools.core")
+console = Console()
 
 def init_database(path: str) -> None:
     conn = open_database(path)
@@ -64,15 +69,23 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
 
     cfg = read_config()
     enable_cache = cfg.get("enable_cache", "false") == "true"
+    if enable_cache:
+        console.print("[dim]cache: enabled[/dim]")
     ctx = create_context(base_path, conn, enable_cache=enable_cache)
     files = get_source_files(ctx)
     tracked = get_branch_files(conn, branch)
 
+    logger.info("sync started — branch=%s, base=%s, files=%d, force=%s", branch, base_path, len(files), force)
+    logger.debug("tracked files: %d", len(tracked))
+
     file_hashes, changed, mtime_only, deleted = _detect_file_changes(files, tracked, base_path, force)
+
+    logger.debug("changes — new/modified=%d, mtime_only=%d, deleted=%d", len(changed), len(mtime_only), len(deleted))
 
     dep_ids = _sync_deps_if_needed(conn, ctx, base_path, sync_deps, force, branch)
 
     if not changed and not deleted and not mtime_only:
+        logger.info("sync complete — no changes")
         conn.close()
         return
 
@@ -82,6 +95,7 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
                 update_mtime(conn, branch, fmeta.path, fmeta.mtime)
         conn.commit()
         conn.close()
+        logger.info("sync complete — mtime-only update for %d files", len(mtime_only))
         return
 
     records, _ = _process_files(ctx, files, base_path)
@@ -105,6 +119,7 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
 
     conn.commit()
     conn.close()
+    logger.info("sync complete — %d entities upserted, %d files processed", len(records), len(changed))
 
 def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force, branch) -> list[str]:
     if sync_deps_override is None:
@@ -114,22 +129,29 @@ def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force, branch
     if not sync_deps:
         return []
 
+    console.print("[dim]sync_deps: enabled, syncing packages...[/dim]")
+    logger.info("dependency sync started")
+
     file_config = read_config()
     venv_path = detect_venv(base_path, file_config)
     if not venv_path:
+        logger.warning("sync_deps enabled but no venv found")
         return []
 
     site_packages = find_site_packages(venv_path)
     if not site_packages:
+        logger.warning("sync_deps enabled but site-packages not found in %s", venv_path)
         return []
 
     max_files = int(file_config.get("max_dep_files", "5000"))
     packages = list_installed_packages(site_packages)
+    logger.info("dependency sync — %d packages found in %s", len(packages), site_packages)
     tracked_deps = {p["package_name"] for p in list_dependencies(conn)}
     current_names = set()
     all_ids: list[str] = []
     for pkg in packages:
         current_names.add(pkg.name)
+        logger.debug("processing dependency: %s@%s (%d modules)", pkg.name, pkg.version, len(pkg.top_level_modules))
         tracked = get_dependency(conn, pkg.name)
         if (
             tracked
@@ -150,9 +172,11 @@ def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force, branch
         )
         all_ids.extend(ids)
     for name in tracked_deps - current_names:
+        logger.info("removing stale dependency: %s", name)
         delete_entities_by_package(conn, name)
         delete_dependency(conn, name)
 
+    logger.info("dependency sync complete — %d packages synced", len(packages))
     return all_ids
 
 def search_entities(pattern: str) -> list[dict]:
@@ -161,14 +185,17 @@ def search_entities(pattern: str) -> list[dict]:
 
     cfg = read_config()
     if cfg.get("auto_sync", "false") == "true":
+        console.print("[dim]auto_sync: checking for changes...[/dim]")
         base_path = get_config(conn, "base_path") or os.getcwd()
         try:
             if _is_stale(conn, branch, base_path):
+                console.print("[dim]auto_sync: project changed, running sync...[/dim]")
                 run_sync(force=False)
         except Exception:
-            pass
+            logger.warning("auto_sync check failed, proceeding with existing data", exc_info=True)
 
     results = db_search_entities(conn, pattern, branch_name=branch)
+    logger.debug("search for %q returned %d results", pattern, len(results))
     conn.close()
     return results
 
@@ -178,17 +205,21 @@ def get_entity_info(full_path: str, resolve: bool = False, all_matches: bool = F
 
     cfg = read_config()
     if cfg.get("auto_sync", "false") == "true":
+        console.print("[dim]auto_sync: checking for changes...[/dim]")
         base_path = get_config(conn, "base_path") or os.getcwd()
         try:
             if _is_stale(conn, branch, base_path):
+                console.print("[dim]auto_sync: project changed, running sync...[/dim]")
                 run_sync(force=False)
         except Exception:
-            pass
+            logger.warning("auto_sync check failed, proceeding with existing data", exc_info=True)
 
     if resolve:
         base_path = get_config(conn, "base_path") or os.getcwd()
         cfg = read_config()
         enable_cache = cfg.get("enable_cache", "false") == "true"
+        if enable_cache:
+            console.print("[dim]cache: enabled, using symbol cache[/dim]")
         ctx = create_context(base_path, conn, enable_cache=enable_cache)
         parts = full_path.rsplit(".", 1)
         if len(parts) != 2:

@@ -6,8 +6,11 @@ from deputy.database.sqlite import (
     upsert_entity,
     upsert_dependency,
 )
+from deputy.logger import get_logger
 from deputy.utils.storage import get_source_files
 from deputy.tools.utils import _process_files
+
+logger = get_logger("venv.process")
 
 def process_dependency(
     package_name: str,
@@ -20,6 +23,8 @@ def process_dependency(
 ) -> list[str]:
     all_entities: list[dict] = []
     total_files = 0
+
+    logger.debug("processing dependency %s@%s — %d top-level modules", package_name, version, len(top_level_modules))
 
     for module_name in top_level_modules:
         module_path = os.path.join(install_path, module_name)

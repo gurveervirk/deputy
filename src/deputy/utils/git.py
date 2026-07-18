@@ -1,4 +1,7 @@
 import subprocess
+from deputy.logger import get_logger
+
+logger = get_logger("utils.git")
 
 def get_current_branch():
     """Get the current git branch name."""
@@ -10,7 +13,9 @@ def get_current_branch():
             check=True,
             text=True
         )
-        return result.stdout.strip()
+        branch = result.stdout.strip()
+        logger.debug("current branch: %s", branch)
+        return branch
     except subprocess.CalledProcessError as e:
-        print(f"Error getting current branch: {e.stderr}")
+        logger.error("Error getting current branch: %s", e.stderr.strip())
         return None

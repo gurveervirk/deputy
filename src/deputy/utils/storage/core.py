@@ -1,8 +1,11 @@
 from deproc.core.context import Context
 from deproc.core.discovery import find_source_files
 from .models import FileMetadata
+from deputy.logger import get_logger
 import hashlib
 import os
+
+logger = get_logger("utils.storage")
 
 def compute_sha256(filepath: str) -> str:
     hasher = hashlib.sha256()
@@ -25,4 +28,5 @@ def get_source_files(context: Context) -> list[FileMetadata]:
         except OSError:
             continue
         results.append(FileMetadata(path=rel_path, mtime=stat.st_mtime))
+    logger.debug("found %d source files", len(results))
     return results

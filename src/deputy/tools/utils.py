@@ -4,10 +4,13 @@ import sqlite3
 from deproc.plugins.python.linker.models import PythonModule
 from deputy.database.sqlite import open_database, get_branch_files
 from deputy.database.sqlite.serialization import entity_to_record
+from deputy.logger import get_logger
 from deputy.utils.config_file import read_config
 from deputy.utils.storage import compute_sha256, get_source_files
 from deputy.core import create_context
 from collections import defaultdict
+
+logger = get_logger("tools.utils")
 
 _DEFAULT_DB = ".deputy.db"
 
@@ -42,11 +45,15 @@ def _detect_file_changes(
         h = compute_sha256(abs_path)
         file_hashes[fmeta.path] = h
         if record is None or record[0] != h or force:
+            logger.debug("file changed: %s (hash mismatch or new)", fmeta.path)
             changed.add(fmeta.path)
         else:
+            logger.debug("file mtime-only: %s", fmeta.path)
             mtime_only.add(fmeta.path)
     
     deleted = set(tracked.keys()) - {f.path for f in files}
+    if deleted:
+        logger.debug("files deleted: %s", ", ".join(sorted(deleted)))
     return file_hashes, changed, mtime_only, deleted
 
 def _build_module_exports(registry) -> dict[str, set[str]]:
@@ -70,10 +77,12 @@ def _process_files(
     relpath_to_fqn = {}
     for fmeta in files:
         abs_path = os.path.join(base_path, fmeta.path)
+        logger.debug("parsing: %s", fmeta.path)
         sf = parser.parse_file(abs_path, ctx)
         source_files.append(sf)
         relpath_to_fqn[fmeta.path] = sf.fqn
     
+    logger.debug("linking %d source files", len(source_files))
     linker.link_files(source_files, ctx)
 
     module_exports = _build_module_exports(ctx.entity_registry)
@@ -89,6 +98,7 @@ def _process_files(
         if record:
             records.append(record)
     
+    logger.debug("processed %d records from %d files", len(records), len(files))
     return records, relpath_to_fqn
 
 def _entity_fqn(entity) -> str | None:
@@ -107,19 +117,25 @@ def _is_stale(conn, branch, base_path):
     tracked = get_branch_files(conn, branch)
 
     if not tracked:
+        logger.debug("stale check: no tracked files, needs sync")
         return True
 
     current_paths = {f.path for f in files}
     tracked_paths = set(tracked.keys())
 
     if current_paths != tracked_paths:
+        added = current_paths - tracked_paths
+        removed = tracked_paths - current_paths
+        logger.debug("stale check: files changed (added=%d, removed=%d)", len(added), len(removed))
         return True
 
     for fmeta in files:
         record = tracked.get(fmeta.path)
         if record is not None and record[1] != fmeta.mtime:
+            logger.debug("stale check: mtime changed for %s", fmeta.path)
             return True
 
+    logger.debug("stale check: up to date")
     return False
 
 def _entity_record(entity, registry, module_exports, source="project", package_name=None, is_stub=False) -> dict | None:

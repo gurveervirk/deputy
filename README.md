@@ -31,6 +31,8 @@ sync_deps=true
 max_dep_files=5000
 enable_cache=true
 auto_sync=true
+log_level=WARNING
+log_file=/path/to/deputy.log
 ```
 
 Settings are managed with `deputy config <key> <value>`.
@@ -45,6 +47,33 @@ Auto-sync is **opt-in**. When enabled, `deputy search` and `deputy info` check i
 
 ```bash
 deputy config auto_sync true
+```
+
+## Logging
+
+Deputy writes structured logs to a file at `.deputy/deputy.log` (project-local). Levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`. Configure via `.deputyconfig`:
+
+```bash
+deputy config log_level DEBUG      # most verbose
+deputy config log_level WARNING    # default
+deputy config log_level ERROR      # errors only
+```
+
+Override the log file path:
+
+```bash
+deputy config log_file /custom/path/deputy.log
+```
+
+Also respects the `DEPUTY_LOG_LEVEL` environment variable.
+
+### CLI flags
+
+All commands accept `--verbose` / `-v` (sets log level to `DEBUG`) and `--quiet` / `-q` (sets log level to `ERROR`):
+
+```bash
+deputy -v sync
+deputy --quiet search "Model"
 ```
 
 ## Commands
