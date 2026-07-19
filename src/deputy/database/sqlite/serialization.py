@@ -110,12 +110,13 @@ def entity_to_record(entity, language: str = "python", module_exports: dict[str,
         return None
 
     metadata = {}
-    if hasattr(entity, "source_range") and entity.source_range:
-        sr = entity.source_range
+    sr = entity.source_range if hasattr(entity, "source_range") else None
+    if sr:
         metadata["lineno"] = sr.lineno
         metadata["end_lineno"] = sr.end_lineno
         metadata["col_offset"] = sr.col_offset
         metadata["end_col_offset"] = sr.end_col_offset
+        metadata["source_id"] = sr.source_id
     if isinstance(entity, PythonImportAlias):
         metadata["original_name"] = entity.name
         if entity.alias:
