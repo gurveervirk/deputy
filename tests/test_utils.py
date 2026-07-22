@@ -4,7 +4,8 @@ from deproc.core.interfaces.parser.models import (
     TypeDefinition,
     ControlFlowBlock,
     ControlFlowGroup,
-    SourceRange
+    SourceRange,
+    VariableDeclaration,
 )
 from deproc.plugins.python.linker.models import PythonModule
 from deproc.plugins.python.parser.models import (
@@ -130,6 +131,20 @@ class TestEntityRecord:
         record = _entity_record(entity, self._registry([]), {})
         assert record["full_path"] == "pkg.mod.MyType"
         assert record["type"] == "TYPE_ALIAS"
+
+    def test_variable_declaration(self):
+        entity = MagicMock(spec=VariableDeclaration)
+        entity.variable_binding = MagicMock(name="myVar", fqn="pkg.mod.myVar")
+
+        record = _entity_record(entity, self._registry([]), {})
+        assert record["full_path"] == "pkg.mod.myVar"
+        assert record["type"] == "VARIABLE"
+
+    def test_variable_declaration_no_binding_returns_none(self):
+        entity = MagicMock(spec=VariableDeclaration)
+        entity.variable_binding = None
+
+        assert _entity_record(entity, self._registry([]), {}) is None
 
     def test_unknown_type_returns_none(self):
         entity = MagicMock()
