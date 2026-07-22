@@ -257,6 +257,20 @@ class TestEntityRecord:
         assert "__branch__" in record["full_path"]
         assert "if" in record["full_path"]
 
+    def test_source_id_stored_in_metadata(self):
+        sr = SourceRange(lineno=5, end_lineno=5, col_offset=0, end_col_offset=10, source_id="mod123")
+        module = PythonModule(id="mod123", fqn="pkg.mod", path="pkg/mod.py", source="", docstring_range=None)
+        entity = MagicMock(spec=FunctionLike)
+        entity.name = "f"
+        entity.fqn = "pkg.mod.f"
+        entity.type = "FUNCTION"
+        entity.source_range = sr
+
+        registry = {"mod123": module}
+        record = _entity_record(entity, registry, {})
+        meta = json.loads(record["metadata_json"])
+        assert meta["source_id"] == "mod123"
+
     def test_control_flow_group_with_registry_fallback(self):
         sr = SourceRange(lineno=1, end_lineno=30, col_offset=0, end_col_offset=2)
         group = ControlFlowGroup(
