@@ -7,6 +7,7 @@ from deproc.core.interfaces.parser.models import (
     FunctionLike,
     SourceRange,
     TypeDefinition,
+    VariableDeclaration,
 )
 from deproc.plugins.python.parser.models import (
     PythonClass,
@@ -30,6 +31,7 @@ TYPE_TO_CLASS = {
     "IMPORT_STATEMENT": PythonImportStatement,
     "CONSTANT": PythonConstant,
     "TYPE_ALIAS": PythonTypeAlias,
+    "VARIABLE": VariableDeclaration,
     "MODULE": PythonModule,
     "PACKAGE": PythonPackage,
     "NAMESPACE_PACKAGE": PythonNamespacePackage,
@@ -77,6 +79,13 @@ def entity_to_record(entity, language: str = "python", module_exports: dict[str,
         name = vb.name
         full_path = vb.fqn or name
         entity_type = "CONSTANT" if isinstance(entity, PythonConstant) else "TYPE_ALIAS"
+    elif isinstance(entity, VariableDeclaration):
+        vb = getattr(entity, "variable_binding", None)
+        if not vb:
+            return None
+        name = vb.name
+        full_path = vb.fqn or name
+        entity_type = "VARIABLE"
     elif isinstance(entity, PythonModule):
         name = entity.fqn.split(".")[-1] if entity.fqn else Path(entity.path).stem
         full_path = entity.fqn or entity.path
@@ -243,6 +252,8 @@ def record_to_entity(record: dict) -> Entity | None:
         return PythonConstant(source_range=sr, **null_fields, **common)
     if entity_class is PythonTypeAlias:
         return PythonTypeAlias(source_range=sr, **null_fields, **common)
+    if entity_class is VariableDeclaration:
+        return VariableDeclaration(source_range=sr, **null_fields, **common)
     if entity_class is ControlFlowBlock:
         condition_range = None
         if "condition_lineno" in meta:
