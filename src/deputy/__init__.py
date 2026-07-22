@@ -9,7 +9,9 @@ from deputy.tools import (
     run_sync,
     search_entities,
     get_entity_info,
+    InteractiveResolver,
 )
+from deputy.tools.utils import _open_database
 from deputy.utils.config_file import read_config, write_config
 
 app = typer.Typer(no_args_is_help=True)
@@ -122,6 +124,33 @@ def get_info(
         console.print(f"[bold]Full Path:[/bold] {result['full_path']}")
         console.print("[bold]Metadata:[/bold]")
         console.print(result["metadata_json"])
+
+@app.command(name="resolve")
+def resolve(
+    symbol: str = typer.Argument(..., help="Symbol to resolve, in the form <module_fqn>.<symbol_name>"),
+    auto: bool = typer.Option(False, "--auto", help="Only stop when multiple choices exist"),
+    step: bool = typer.Option(False, "--step", help="Stop at every step regardless of ambiguity"),
+) -> None:
+    parts = symbol.rsplit(".", 1)
+    if len(parts) != 2:
+        console.print("[red]Symbol must be in the form <module_fqn>.<symbol_name>[/red]")
+        raise typer.Exit(code=1)
+    module_fqn, symbol_name = parts
+
+    try:
+        conn = _open_database()
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
+
+    mode = "step" if step else ("auto" if auto else "default")
+    resolver = InteractiveResolver(conn, mode=mode)
+    result = resolver.resolve(module_fqn, symbol_name)
+
+    conn.close()
+
+    if result is None:
+        raise typer.Exit(code=1)
 
 @app.command()
 def config(
