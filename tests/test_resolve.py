@@ -156,6 +156,132 @@ class TestRelativeImport:
         assert result["full_path"] == "mypkg.sub.target"
         assert result["type"] == "FUNCTION"
 
+class TestResolveAll:
+    def test_collects_all_terminal_entities(self, db):
+        """resolve_all returns all terminal concrete entities through alias chains."""
+        upsert_entity(db, id="mod_a", language="python", full_path="pkg", name="pkg", type="MODULE",
+                      metadata_json='{"fqn":"pkg","path":"pkg.py"}')
+        upsert_entity(db, id="mod_b", language="python", full_path="pkg.mod", name="mod", type="MODULE",
+                      metadata_json='{"fqn":"pkg.mod","path":"pkg/mod.py"}')
+        upsert_entity(db, id="func1", language="python", full_path="pkg.mod.func", name="func",
+                      type="FUNCTION", metadata_json='{"fqn":"pkg.mod.func","lineno":1}')
+        upsert_entity(db, id="stmt", language="python",
+                      full_path="pkg.__import__.mod", name="pkg.mod",
+                      type="IMPORT_STATEMENT",
+                      metadata_json='{"import_type":"from","parent_id":"mod_a"}')
+        upsert_entity(db, id="alias_f", language="python", full_path="pkg.func", name="func",
+                      type="IMPORT_ALIAS",
+                      metadata_json='{"original_name":"func","parent_id":"stmt","fqn":"pkg.func"}')
+        db.commit()
+
+        resolver = InteractiveResolver(db, mode="default")
+        results = resolver.resolve_all("pkg", "func")
+        assert len(results) == 1
+        assert results[0]["id"] == "func1"
+
+    def test_multiple_concrete_entities(self, db):
+        """resolve_all collects multiple concrete entities for the same FQN."""
+        upsert_entity(db, id="mod_m", language="python", full_path="mod", name="mod", type="MODULE",
+                      metadata_json='{"fqn":"mod","path":"mod.py"}')
+        for i, bid in enumerate(["v1", "v2", "v3"]):
+            upsert_entity(db, id=bid, language="python", full_path="mod.VAL",
+                          name="VAL", type="VARIABLE",
+                          metadata_json=json.dumps({"lineno": i * 5 + 1}))
+        db.commit()
+
+        resolver = InteractiveResolver(db, mode="default")
+        results = resolver.resolve_all("mod", "VAL")
+        assert len(results) == 3
+        assert all(r["full_path"] == "mod.VAL" for r in results)
+
+    def test_multi_level_collects_all(self, db):
+        """resolve_all follows all alias chains to collect terminal entities."""
+        upsert_entity(db, id="mod_top", language="python", full_path="top", name="top", type="MODULE",
+                      metadata_json='{"fqn":"top","path":"top.py"}')
+        upsert_entity(db, id="mod_bot", language="python", full_path="bot", name="bot", type="MODULE",
+                      metadata_json='{"fqn":"bot","path":"bot.py"}')
+        upsert_entity(db, id="func_bot", language="python", full_path="bot.run", name="run",
+                      type="FUNCTION", metadata_json='{"fqn":"bot.run","lineno":5,"path":"bot.py"}')
+        upsert_entity(db, id="stmt_bot", language="python",
+                      full_path="top.__import__.bot", name="bot",
+                      type="IMPORT_STATEMENT",
+                      metadata_json='{"import_type":"from","parent_id":"mod_top"}')
+        upsert_entity(db, id="alias_top", language="python", full_path="top.run", name="run",
+                      type="IMPORT_ALIAS",
+                      metadata_json='{"original_name":"run","parent_id":"stmt_bot","fqn":"top.run"}')
+        db.commit()
+
+        resolver = InteractiveResolver(db, mode="default")
+        results = resolver.resolve_all("top", "run")
+        assert len(results) == 1
+        assert results[0]["full_path"] == "bot.run"
+
+    def test_cycle_detection(self, db):
+        """resolve_all handles cycles without infinite recursion."""
+        upsert_entity(db, id="mod_a", language="python", full_path="a", name="a", type="MODULE",
+                      metadata_json='{"fqn":"a","path":"a.py"}')
+        upsert_entity(db, id="stmt_a2b", language="python",
+                      full_path="a.__import__.b", name="b",
+                      type="IMPORT_STATEMENT",
+                      metadata_json='{"import_type":"from","parent_id":"mod_a"}')
+        upsert_entity(db, id="alias_a2b", language="python", full_path="a.val", name="val",
+                      type="IMPORT_ALIAS",
+                      metadata_json='{"original_name":"val","parent_id":"stmt_a2b","fqn":"a.val"}')
+        upsert_entity(db, id="stmt_b2a", language="python",
+                      full_path="b.__import__.a", name="a",
+                      type="IMPORT_STATEMENT",
+                      metadata_json='{"import_type":"from","parent_id":"mod_a"}')
+        upsert_entity(db, id="alias_b2a", language="python", full_path="b.val", name="val",
+                      type="IMPORT_ALIAS",
+                      metadata_json='{"original_name":"val","parent_id":"stmt_b2a","fqn":"b.val"}')
+        db.commit()
+
+        resolver = InteractiveResolver(db, mode="default")
+        results = resolver.resolve_all("a", "val")
+        assert len(results) == 0  # no terminal concretes, but no crash
+
+    def test_all_compact_output(self, db):
+        """_print_all_compact prints one line per terminal entity."""
+        upsert_entity(db, id="mod_c", language="python", full_path="pkg", name="pkg", type="MODULE",
+                      metadata_json='{"fqn":"pkg","path":"pkg.py"}')
+        upsert_entity(db, id="c1", language="python", full_path="pkg.T", name="T", type="CLASS",
+                      metadata_json=json.dumps({"fqn": "pkg.T", "lineno": 1, "source_id": "mod_c"}))
+        upsert_entity(db, id="c2", language="python", full_path="pkg.T", name="T", type="CLASS",
+                      metadata_json=json.dumps({"fqn": "pkg.T", "lineno": 5, "source_id": "mod_c"}))
+        db.commit()
+
+        output = io.StringIO()
+        resolver = InteractiveResolver(db, mode="default")
+        resolver.console = Console(file=output)
+        resolver._print_all_compact("pkg", "T")
+        printed = output.getvalue()
+        assert "CLASS  pkg.T" in printed
+        assert printed.count("\n") >= 2  # two lines
+
+    def test_all_not_found(self, db):
+        """resolve_all returns empty list for non-existent symbols."""
+        resolver = InteractiveResolver(db, mode="default")
+        results = resolver.resolve_all("nonexistent", "sym")
+        assert results == []
+
+    def test_all_tree_no_alias_direct_concrete(self, db):
+        """_print_all_tree shows directly found concrete in tree with leaves."""
+        upsert_entity(db, id="mod_d", language="python", full_path="dir.mod", name="mod", type="MODULE",
+                      metadata_json='{"fqn":"dir.mod","path":"dir/mod.py"}')
+        upsert_entity(db, id="f1", language="python", full_path="dir.mod.act", name="act",
+                      type="FUNCTION",
+                      metadata_json='{"fqn":"dir.mod.act","lineno":1,"source_id":"mod_d"}')
+        db.commit()
+
+        output = io.StringIO()
+        resolver = InteractiveResolver(db, mode="default")
+        resolver.console = Console(file=output)
+        resolver._print_all_tree("dir.mod", "act")
+        printed = output.getvalue()
+        assert "FUNCTION act @ dir/mod.py:1" in printed
+        assert "Resolved leaves:" in printed
+
+
 class TestResolveWithBranch:
     def test_resolve_scoped_to_branch(self, db):
         upsert_entity(db,
