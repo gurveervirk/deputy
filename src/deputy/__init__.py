@@ -97,11 +97,10 @@ def search(
 @app.command(name="info")
 def get_info(
     full_path: str = typer.Argument(..., help="Exact entity full path"),
-    resolve: bool = typer.Option(False, "--resolve", "-r", help="Resolve symbol through imports/re-exports"),
     all_matches: bool = typer.Option(False, "--all", "-a", help="Return all matching entities (default returns only the first)"),
 ) -> None:
     try:
-        result = get_entity_info(full_path, resolve, all_matches)
+        result = get_entity_info(full_path, all_matches)
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
@@ -110,26 +109,27 @@ def get_info(
         if not result:
             console.print(f"[red]Entity not found:[/red] {full_path}")
             raise typer.Exit()
-        table = Table("Name", "Type", "Language", "Full Path")
+        table = Table("Full Path", "Language", "Type", "Source")
         for row in result:
-            table.add_row(row["name"], row["type"], row["language"], row["full_path"])
+            source = row.get("_source", "")
+            table.add_row(row["full_path"], row["language"], row["type"], source)
         console.print(table)
     else:
         if result is None:
             console.print(f"[red]Entity not found:[/red] {full_path}")
             raise typer.Exit()
-        console.print(f"[bold]Name:[/bold] {result['name']}")
-        console.print(f"[bold]Type:[/bold] {result['type']}")
-        console.print(f"[bold]Language:[/bold] {result['language']}")
-        console.print(f"[bold]Full Path:[/bold] {result['full_path']}")
-        console.print("[bold]Metadata:[/bold]")
-        console.print(result["metadata_json"])
+        source = result.get("_source", "")
+        loc = f" @ {source}" if source else ""
+        console.print(f"{result['full_path']}  {result['language']}  {result['type']}{loc}")
 
+# TODO: Allow user to go back a step, and also go forward to the next step if they had gone back a path
 @app.command(name="resolve")
 def resolve(
     symbol: str = typer.Argument(..., help="Symbol to resolve, in the form <module_fqn>.<symbol_name>"),
     auto: bool = typer.Option(False, "--auto", help="Only stop when multiple choices exist"),
     step: bool = typer.Option(False, "--step", help="Stop at every step regardless of ambiguity"),
+    all: bool = typer.Option(False, "--all", help="Show all possible resolutions"),
+    compact: bool = typer.Option(False, "--compact", help="Compact output with --all (terminal entities only)"),
 ) -> None:
     parts = symbol.rsplit(".", 1)
     if len(parts) != 2:
@@ -143,14 +143,24 @@ def resolve(
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
 
-    mode = "step" if step else ("auto" if auto else "default")
-    resolver = InteractiveResolver(conn, mode=mode)
-    result = resolver.resolve(module_fqn, symbol_name)
+    if compact and not all:
+        console.print("[red]--compact requires --all[/red]")
+        raise typer.Exit(code=1)
+
+    resolver = InteractiveResolver(conn, mode="default")
+    if all:
+        if compact:
+            resolver._print_all_compact(module_fqn, symbol_name)
+        else:
+            resolver._print_all_tree(module_fqn, symbol_name)
+    else:
+        mode = "step" if step else ("auto" if auto else "default")
+        resolver.mode = mode
+        result = resolver.resolve(module_fqn, symbol_name)
+        if result is None:
+            raise typer.Exit(code=1)
 
     conn.close()
-
-    if result is None:
-        raise typer.Exit(code=1)
 
 @app.command()
 def config(
