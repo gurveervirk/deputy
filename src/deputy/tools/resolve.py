@@ -395,3 +395,124 @@ class InteractiveResolver:
             if entity and entity["type"] == "PACKAGE":
                 return True
         return False
+
+    def resolve_all(self, module_fqn: str, symbol_name: str) -> list[dict]:
+        results: list[dict] = []
+        self._collect_terminals(f"{module_fqn}.{symbol_name}", set(), results)
+        return results
+
+    def _collect_terminals(self, fqn: str, visited: set[str], results: list[dict]) -> None:
+        if fqn in visited:
+            return
+        visited.add(fqn)
+        ids = get_entity_ids_by_fqn(self.conn, fqn)
+        if not ids:
+            return
+        entities = get_entities_by_ids(self.conn, ids)
+        if not entities:
+            return
+        concretes = [e for e in entities if e["type"] != "IMPORT_ALIAS"]
+        aliases = [e for e in entities if e["type"] == "IMPORT_ALIAS"]
+        results.extend(concretes)
+        for alias in aliases:
+            next_mod, next_sym = self._follow_alias(alias)
+            if next_mod:
+                self._collect_terminals(f"{next_mod}.{next_sym}", visited, results)
+
+    def _print_all_tree(self, module_fqn: str, symbol_name: str) -> None:
+        fqn = f"{module_fqn}.{symbol_name}"
+        visited: set[str] = set()
+        resolved_targets: set[str] = set()
+        tree = self._build_all_tree(fqn, visited, resolved_targets)
+        if tree:
+            self.console.print(tree)
+        terminals = self.resolve_all(module_fqn, symbol_name)
+        if terminals:
+            self.console.print()
+            self.console.print("[bold]Resolved leaves:[/bold]")
+            for ent in terminals:
+                meta = json.loads(ent["metadata_json"])
+                sp = self._get_source_path(ent)
+                lineno = meta.get("lineno", "")
+                loc = f" @ {sp}:{lineno}" if sp and lineno else ""
+                self.console.print(f"  [green]→ {ent['type']} {ent['name']}{loc}[/green]")
+        elif not tree:
+            self.console.print(f"\n[red]Entity not found:[/red] {fqn}")
+
+    def _build_all_tree(self, fqn: str, visited: set[str], resolved_targets: set[str]) -> Tree:
+        root = Tree(f"[bold]{fqn}[/bold]")
+        if fqn in visited:
+            root.add("[dim](circular import)[/dim]")
+            return root
+        visited.add(fqn)
+        ids = get_entity_ids_by_fqn(self.conn, fqn)
+        entities = get_entities_by_ids(self.conn, ids) if ids else []
+        if not entities:
+            visited.discard(fqn)
+            return root
+        concretes = [e for e in entities if e["type"] != "IMPORT_ALIAS"]
+        aliases = [e for e in entities if e["type"] == "IMPORT_ALIAS"]
+        for ent in concretes:
+            meta = json.loads(ent["metadata_json"])
+            sp = self._get_source_path(ent)
+            lineno = meta.get("lineno", "")
+            loc = f" @ {sp}:{lineno}" if sp and lineno else ""
+            root.add(f"[green]{ent['type']} {ent['name']}{loc}[/green]")
+        if not aliases:
+            visited.discard(fqn)
+            return root
+        for alias in aliases:
+            meta = json.loads(alias["metadata_json"])
+            lineno = meta.get("lineno", "")
+            sp = self._get_source_path(alias)
+            loc = f" @ {sp}:{lineno}" if sp and lineno else ""
+            label = f"[yellow]IMPORT_ALIAS[/yellow] {alias['name']}{loc}"
+            alias_node = root.add(label)
+            parent_id = self._get_parent_id(alias)
+            from_line = ""
+            if parent_id:
+                imp = get_entity_by_id(self.conn, parent_id)
+                if imp:
+                    original = meta.get("original_name", alias["name"])
+                    from_line = f"[dim]from {imp['name']} import {original}[/dim]"
+            next_mod, next_sym = self._follow_alias(alias)
+            if not next_mod:
+                if from_line:
+                    alias_node.add(from_line)
+                continue
+            target = f"{next_mod}.{next_sym}"
+            if target in resolved_targets:
+                if from_line:
+                    alias_node.add(f"[dim]from {imp['name']} import {original} (skipped, duplicate path)[/dim]")
+                continue
+            resolved_targets.add(target)
+            if from_line:
+                from_node = alias_node.add(from_line)
+                subtree = self._build_all_tree(target, visited, resolved_targets)
+                if subtree:
+                    self._merge_tree(from_node, subtree)
+            else:
+                subtree = self._build_all_tree(target, visited, resolved_targets)
+                if subtree:
+                    self._merge_tree(alias_node, subtree)
+        visited.discard(fqn)
+        return root
+
+    @staticmethod
+    def _merge_tree(parent: Tree, subtree: Tree) -> Tree:
+        node = parent.add(subtree.label)
+        for child in subtree.children:
+            node.children.append(child)
+        return node
+
+    def _print_all_compact(self, module_fqn: str, symbol_name: str) -> None:
+        terminals = self.resolve_all(module_fqn, symbol_name)
+        if not terminals:
+            self.console.print(f"[red]Entity not found:[/red] {module_fqn}.{symbol_name}")
+            return
+        for ent in terminals:
+            meta = json.loads(ent["metadata_json"])
+            sp = self._get_source_path(ent)
+            lineno = meta.get("lineno", "")
+            loc = f" @ {sp}:{lineno}" if sp and lineno else ""
+            self.console.print(f"{ent['type']}  {ent['full_path']}{loc}")

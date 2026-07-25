@@ -1,4 +1,5 @@
 import os
+import json
 from rich.console import Console
 from deputy._version import __version__
 from deputy.database.sqlite import (
@@ -212,7 +213,25 @@ def search_entities(
     conn.close()
     return results
 
-def get_entity_info(full_path: str, resolve: bool = False, all_matches: bool = False):
+def _compute_source(entity: dict, conn) -> str:
+    meta = json.loads(entity["metadata_json"])
+    lineno = meta.get("lineno", "")
+    if not lineno:
+        return ""
+    if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
+        path = meta.get("path", "")
+        return f"{path}:{lineno}" if path else ""
+    sid = meta.get("source_id")
+    if sid:
+        src = get_entity_by_id(conn, sid)
+        if src:
+            src_meta = json.loads(src["metadata_json"])
+            path = src_meta.get("path", "")
+            if path:
+                return f"{path}:{lineno}"
+    return ""
+
+def get_entity_info(full_path: str, all_matches: bool = False):
     conn = _open_database()
     branch = get_current_branch()
 
@@ -227,37 +246,16 @@ def get_entity_info(full_path: str, resolve: bool = False, all_matches: bool = F
         except Exception:
             logger.warning("auto_sync check failed, proceeding with existing data", exc_info=True)
 
-    if resolve:
-        base_path = get_config(conn, "base_path") or os.getcwd()
-        cfg = read_config()
-        enable_cache = cfg.get("enable_cache", "false") == "true"
-        if enable_cache:
-            console.print("[dim]cache: enabled, using symbol cache[/dim]")
-        ctx = create_context(base_path, conn, enable_cache=enable_cache)
-        parts = full_path.rsplit(".", 1)
-        if len(parts) != 2:
-            conn.close()
-            return [] if all_matches else None
-        module_fqn, symbol_name = parts
-        resolver = ctx.get_resolver("python")
-        result = resolver.resolve(module_fqn, symbol_name, ctx)
-        if all_matches:
-            entities = get_entities_by_ids(conn, result.resolved_ids)
-            conn.close()
-            return entities
-        entity = None
-        if result.resolved_ids:
-            entity = get_entity_by_id(conn, next(iter(result.resolved_ids)))
-        if not entity:
-            entity = get_entity_by_path(conn, full_path, branch_name=branch)
-        conn.close()
-        return entity
-
     if all_matches:
         results = get_entities_by_path(conn, full_path, branch_name=branch)
+        if results:
+            for row in results:
+                row["_source"] = _compute_source(row, conn)
         conn.close()
         return results if results else []
 
     entity = get_entity_by_path(conn, full_path, branch_name=branch)
+    if entity:
+        entity["_source"] = _compute_source(entity, conn)
     conn.close()
     return entity
