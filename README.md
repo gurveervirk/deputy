@@ -196,7 +196,7 @@ deputy CLI (typer)
        ├─ sync → get_source_files → deproc parse/link → upsert_entities
        │   └─ --sync-deps → detect_venv → list_installed_packages → process_dependency
        ├─ search → SQLite REGEXP query on entities
-       ├─ info → get_entity_by_path + optional SqlitePythonResolver.resolve()
+       ├─ info → get_entity_by_path / get_entities_by_path
        └─ config → read/write .deputyconfig
 ```
 

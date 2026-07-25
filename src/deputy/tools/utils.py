@@ -41,7 +41,7 @@ def _detect_file_changes(
     mtime_only: set[str] = set()
     for fmeta in files:
         record = tracked.get(fmeta.path)
-        if record is not None and record[1] == fmeta.mtime:
+        if record is not None and record[1] == fmeta.mtime and not force:
             continue
         abs_path = os.path.join(base_path, fmeta.path)
         h = compute_sha256(abs_path)

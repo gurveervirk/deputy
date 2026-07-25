@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from deputy.database.sqlite import (
     clean_orphan_entities,
     delete_branch_entities,
@@ -17,6 +18,8 @@ from deputy.database.sqlite import (
     set_config,
     get_config,
 )
+from deputy.tools.utils import _detect_file_changes
+from deputy.utils.storage.models import FileMetadata
 
 class TestBranchFiles:
     def test_upsert_and_get(self, db):
@@ -218,3 +221,49 @@ class TestSearchFilters:
         results = search_entities(db, "ClassA", branch_name="feature", type_filter=["CLASS"])
         assert len(results) == 1
         assert results[0]["id"] == "id1"
+
+class TestDetectFileChanges:
+    @patch("deputy.tools.utils.compute_sha256", return_value="abc123")
+    def test_force_flag_processes_files_with_matching_mtime(self, mock_hash):
+        """With force=True, files are processed even when mtime matches tracked record."""
+        files = [FileMetadata(path="src/main.py", mtime=100.0)]
+        tracked = {"src/main.py": ("abc123", 100.0)}
+
+        _, changed, mtime_only, _ = _detect_file_changes(files, tracked, "/tmp", force=True)
+        assert "src/main.py" in changed
+        assert "src/main.py" not in mtime_only
+        mock_hash.assert_called_once()
+
+    @patch("deputy.tools.utils.compute_sha256", return_value="abc123")
+    def test_without_force_skips_on_mtime_match(self, mock_hash):
+        """Without force, files with matching mtime are skipped entirely."""
+        files = [FileMetadata(path="src/main.py", mtime=100.0)]
+        tracked = {"src/main.py": ("abc123", 100.0)}
+
+        _, changed, mtime_only, _ = _detect_file_changes(files, tracked, "/tmp", force=False)
+        assert "src/main.py" not in changed
+        assert "src/main.py" not in mtime_only
+        mock_hash.assert_not_called()
+
+    @patch("deputy.tools.utils.compute_sha256", return_value="abc123")
+    def test_force_flag_detects_changed_files(self, mock_hash):
+        """With force=True and changed hash, file goes into changed set."""
+        from deputy.tools.utils import _detect_file_changes
+        from deputy.utils.storage.models import FileMetadata
+
+        files = [FileMetadata(path="src/main.py", mtime=100.0)]
+        tracked = {"src/main.py": ("oldhash", 100.0)}
+
+        _, changed, mtime_only, _ = _detect_file_changes(files, tracked, "/tmp", force=True)
+        assert "src/main.py" in changed
+        assert "src/main.py" not in mtime_only
+
+    @patch("deputy.tools.utils.compute_sha256", return_value="abc123")
+    def test_deleted_files_detected(self, mock_hash):
+        """Files in tracked but not in files list appear as deleted."""
+        files = [FileMetadata(path="src/kept.py", mtime=100.0)]
+        tracked = {"src/kept.py": ("h1", 100.0), "src/deleted.py": ("h2", 200.0)}
+
+        _, changed, mtime_only, deleted = _detect_file_changes(files, tracked, "/tmp", force=True)
+        assert "src/deleted.py" in deleted
+        assert "src/kept.py" in changed or "src/kept.py" in mtime_only

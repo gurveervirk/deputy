@@ -29,7 +29,6 @@ from .main import (
 )
 from .serialization import entity_to_record, record_to_entity
 from .symbol_cache import SqliteSymbolCache
-from .resolver import SqlitePythonResolver
 
 __all__ = [
     "open_database",
@@ -62,5 +61,4 @@ __all__ = [
     "entity_to_record",
     "record_to_entity",
     "SqliteSymbolCache",
-    "SqlitePythonResolver",
 ]
