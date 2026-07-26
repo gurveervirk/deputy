@@ -11,11 +11,10 @@ from deputy.database.sqlite import (
     get_branch_files,
     get_config,
     get_dependency,
-    get_entities_by_ids,
     get_entities_by_path,
+    get_filtered_entities_by_path,
     get_dependency_entity_ids,
     get_entity_by_id,
-    get_entity_by_path,
     init_schema,
     list_dependencies,
     open_database,
@@ -215,12 +214,12 @@ def search_entities(
 
 def _compute_source(entity: dict, conn) -> str:
     meta = json.loads(entity["metadata_json"])
+    if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
+        path = meta.get("path", "")
+        return path or ""
     lineno = meta.get("lineno", "")
     if not lineno:
         return ""
-    if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
-        path = meta.get("path", "")
-        return f"{path}:{lineno}" if path else ""
     sid = meta.get("source_id")
     if sid:
         src = get_entity_by_id(conn, sid)
@@ -231,7 +230,54 @@ def _compute_source(entity: dict, conn) -> str:
                 return f"{path}:{lineno}"
     return ""
 
-def get_entity_info(full_path: str, all_matches: bool = False):
+def _get_source_file_path(entity: dict, conn, base_path: str) -> str | None:
+    meta = json.loads(entity["metadata_json"])
+    if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
+        path = meta.get("path", "")
+    else:
+        sid = meta.get("source_id")
+        if sid:
+            src = get_entity_by_id(conn, sid)
+            if src:
+                path = json.loads(src["metadata_json"]).get("path", "")
+            else:
+                path = ""
+        else:
+            path = ""
+    if not path:
+        return None
+    full = os.path.join(base_path, path) if not os.path.isabs(path) else path
+    return full if os.path.isfile(full) else None
+
+def _extract_source_text(entity: dict, conn, base_path: str) -> dict[str, str]:
+    meta = json.loads(entity["metadata_json"])
+    file_path = _get_source_file_path(entity, conn, base_path)
+    if not file_path:
+        return {}
+    try:
+        with open(file_path) as f:
+            lines = f.readlines()
+    except (FileNotFoundError, IOError):
+        return {}
+    result = {}
+    for key in ("signature", "arguments", "return_type", "docstring"):
+        lineno_key = f"{key}_lineno"
+        end_lineno_key = f"{key}_end_lineno"
+        if lineno_key in meta and end_lineno_key in meta:
+            start = meta[lineno_key] - 1
+            end = meta[end_lineno_key]
+            text = "".join(lines[start:end]).strip()
+            if text:
+                result[key] = text
+    return result
+
+def get_entity_info(
+    full_path: str,
+    all_matches: bool = False,
+    type_filter: str | None = None,
+    lineno: int | None = None,
+    extract: bool = False,
+) -> dict | list[dict]:
     conn = _open_database()
     branch = get_current_branch()
 
@@ -246,16 +292,26 @@ def get_entity_info(full_path: str, all_matches: bool = False):
         except Exception:
             logger.warning("auto_sync check failed, proceeding with existing data", exc_info=True)
 
-    if all_matches:
+    if type_filter or lineno is not None:
+        results = get_filtered_entities_by_path(conn, full_path, branch_name=branch, type_filter=type_filter, lineno=lineno)
+    else:
         results = get_entities_by_path(conn, full_path, branch_name=branch)
-        if results:
-            for row in results:
-                row["_source"] = _compute_source(row, conn)
-        conn.close()
-        return results if results else []
 
-    entity = get_entity_by_path(conn, full_path, branch_name=branch)
-    if entity:
-        entity["_source"] = _compute_source(entity, conn)
+    if not results:
+        conn.close()
+        return [] if all_matches else None
+
+    base_path = get_config(conn, "base_path") or os.getcwd()
+    for row in results:
+        row["_source"] = _compute_source(row, conn)
+        if extract:
+            row["_extracted"] = _extract_source_text(row, conn, base_path)
+
     conn.close()
-    return entity
+
+    if all_matches:
+        return results
+
+    result = results[0]
+    result["_match_count"] = len(results)
+    return result
