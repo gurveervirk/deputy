@@ -206,12 +206,13 @@ def get_entities_by_path(
         rows = conn.execute(
             """SELECT e.* FROM entities e
                JOIN branch_entities be ON e.id = be.entity_id
-               WHERE be.branch_name = ? AND e.full_path = ?""",
+               WHERE be.branch_name = ? AND e.full_path = ?
+               ORDER BY json_extract(e.metadata_json, '$.lineno')""",
             (branch_name, full_path),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM entities WHERE full_path = ?",
+            "SELECT * FROM entities WHERE full_path = ? ORDER BY json_extract(metadata_json, '$.lineno')",
             (full_path,),
         ).fetchall()
     return [dict(row) for row in rows]
@@ -257,7 +258,7 @@ def get_filtered_entities_by_path(
     if lineno is not None:
         sql += " AND json_extract(metadata_json, '$.lineno') = ?"
         params.append(lineno)
-    sql += " ORDER BY e.id" if branch_name else " ORDER BY id"
+    sql += f" ORDER BY json_extract({'e.' if branch_name else ''}metadata_json, '$.lineno')"
     rows = conn.execute(sql, params).fetchall()
     return [dict(row) for row in rows]
 
