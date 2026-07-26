@@ -206,12 +206,13 @@ def get_entities_by_path(
         rows = conn.execute(
             """SELECT e.* FROM entities e
                JOIN branch_entities be ON e.id = be.entity_id
-               WHERE be.branch_name = ? AND e.full_path = ?""",
+               WHERE be.branch_name = ? AND e.full_path = ?
+               ORDER BY json_extract(e.metadata_json, '$.lineno')""",
             (branch_name, full_path),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM entities WHERE full_path = ?",
+            "SELECT * FROM entities WHERE full_path = ? ORDER BY json_extract(metadata_json, '$.lineno')",
             (full_path,),
         ).fetchall()
     return [dict(row) for row in rows]
@@ -235,6 +236,31 @@ def get_entity_by_path(
     if row is None:
         return None
     return dict(row)
+
+def get_filtered_entities_by_path(
+    conn: sqlite3.Connection,
+    full_path: str,
+    branch_name: str | None = None,
+    type_filter: str | None = None,
+    lineno: int | None = None,
+) -> list[dict]:
+    if branch_name:
+        sql = """SELECT e.* FROM entities e
+                 JOIN branch_entities be ON e.id = be.entity_id
+                 WHERE be.branch_name = ? AND e.full_path = ?"""
+        params: list = [branch_name, full_path]
+    else:
+        sql = "SELECT * FROM entities WHERE full_path = ?"
+        params = [full_path]
+    if type_filter:
+        sql += " AND e.type = ?" if branch_name else " AND type = ?"
+        params.append(type_filter)
+    if lineno is not None:
+        sql += " AND json_extract(metadata_json, '$.lineno') = ?"
+        params.append(lineno)
+    sql += f" ORDER BY json_extract({'e.' if branch_name else ''}metadata_json, '$.lineno')"
+    rows = conn.execute(sql, params).fetchall()
+    return [dict(row) for row in rows]
 
 def delete_entities_by_package(conn: sqlite3.Connection, package_name: str) -> None:
     conn.execute(

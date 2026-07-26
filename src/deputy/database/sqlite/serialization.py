@@ -156,6 +156,39 @@ def entity_to_record(entity, language: str = "python", module_exports: dict[str,
         metadata["all_exports"] = entity.all_exports
     if hasattr(entity, "visibility") and entity.visibility:
         metadata["visibility"] = entity.visibility
+    if hasattr(entity, "docstring_range") and entity.docstring_range:
+        dr = entity.docstring_range
+        metadata["docstring_lineno"] = dr.lineno
+        metadata["docstring_end_lineno"] = dr.end_lineno
+    if isinstance(entity, FunctionLike):
+        if hasattr(entity, "signature") and entity.signature:
+            sig = entity.signature
+            metadata["signature_lineno"] = sig.signature_range.lineno
+            metadata["signature_end_lineno"] = sig.signature_range.end_lineno
+            if sig.arguments_range:
+                metadata["arguments_lineno"] = sig.arguments_range.lineno
+                metadata["arguments_end_lineno"] = sig.arguments_range.end_lineno
+            if sig.return_type_range:
+                metadata["return_type_lineno"] = sig.return_type_range.lineno
+                metadata["return_type_end_lineno"] = sig.return_type_range.end_lineno
+        if hasattr(entity, "annotations") and entity.annotations:
+            metadata["decorators"] = [a.name for a in entity.annotations]
+    if isinstance(entity, TypeDefinition):
+        if hasattr(entity, "inherits") and entity.inherits:
+            metadata["parent_classes"] = entity.inherits
+        if hasattr(entity, "method_ids") and entity.method_ids:
+            metadata["method_ids"] = entity.method_ids
+        if hasattr(entity, "inner_type_ids") and entity.inner_type_ids:
+            metadata["inner_type_ids"] = entity.inner_type_ids
+        if hasattr(entity, "property_ids") and entity.property_ids:
+            metadata["property_ids"] = entity.property_ids
+    if isinstance(entity, VariableDeclaration):
+        if hasattr(entity, "type_annotation") and entity.type_annotation:
+            ta = entity.type_annotation
+            metadata["type_annotation_lineno"] = ta.lineno
+            metadata["type_annotation_end_lineno"] = ta.end_lineno
+        if hasattr(entity, "modifiers") and entity.modifiers:
+            metadata["modifiers"] = entity.modifiers
 
     mfqn = entity.fqn if isinstance(entity, (PythonModule, PythonNamespacePackage)) else _module_fqn(full_path)
     if mfqn and name in (module_exports or {}).get(mfqn, set()):
