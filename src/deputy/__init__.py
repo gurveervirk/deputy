@@ -1,3 +1,4 @@
+import json
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -13,6 +14,25 @@ from deputy.tools import (
 )
 from deputy.tools.utils import _open_database
 from deputy.utils.config_file import read_config, write_config
+
+AVAILABLE_COLUMNS = {
+    "full_path": "Entity full path",
+    "language": "Language",
+    "type": "Entity type",
+    "lineno": "Starting line number",
+    "end_lineno": "Ending line number",
+    "source": "Source file:lineno",
+    "signature": "Signature location as path:line or path:start-end (actual text with --extract)",
+    "arguments": "Arguments location as path:line or path:start-end",
+    "return_type": "Return type annotation location as path:line or path:start-end",
+    "docstring": "Docstring location as path:line or path:start-end (actual text with --extract)",
+    "decorators": "Decorator names",
+    "parent_classes": "Parent/inherited class names",
+    "visibility": "Visibility modifier",
+    "exported": "Whether exported in __all__",
+}
+
+DEFAULT_COLUMNS = ["full_path", "language", "type", "source"]
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
@@ -94,13 +114,106 @@ def search(
             table.add_row(row["name"], row["type"], row["language"], row["full_path"])
         console.print(table)
 
+def _get_file_path(source: str) -> str:
+    parts = source.rsplit(":", 1)
+    return parts[0] if len(parts) > 1 else source
+
+def _format_range(entity: dict, meta: dict, col: str, extracted: dict | None = None) -> str:
+    if extracted and col in extracted:
+        return extracted[col]
+    start = meta.get(f"{col}_lineno")
+    end = meta.get(f"{col}_end_lineno")
+    if start is None:
+        return ""
+    path = _get_file_path(entity.get("_source", ""))
+    loc = f"{path}:{start}" if start == end else f"{path}:{start}-{end}"
+    return loc
+
+def _get_column_value(entity: dict, col: str, meta: dict, extracted: dict | None = None) -> str:
+    if col == "full_path":
+        return entity["full_path"]
+    if col == "language":
+        return entity["language"]
+    if col == "type":
+        return entity["type"]
+    if col == "lineno":
+        return str(meta.get("lineno", ""))
+    if col == "end_lineno":
+        return str(meta.get("end_lineno", ""))
+    if col == "source":
+        return entity.get("_source", "")
+    if col in ("signature", "arguments", "return_type", "docstring"):
+        return _format_range(entity, meta, col, extracted)
+    if col == "decorators":
+        return ", ".join(meta.get("decorators", []))
+    if col == "parent_classes":
+        return ", ".join(meta.get("parent_classes", []))
+    if col == "visibility":
+        return meta.get("visibility", "")
+    if col == "exported":
+        return str(meta.get("exported", ""))
+    return ""
+    if col == "decorators":
+        return ", ".join(meta.get("decorators", []))
+    if col == "parent_classes":
+        return ", ".join(meta.get("parent_classes", []))
+    if col == "visibility":
+        return meta.get("visibility", "")
+    if col == "exported":
+        return str(meta.get("exported", ""))
+    return ""
+
+def _display_info_single(entity: dict, columns: list[str], extract: bool) -> None:
+    meta = json.loads(entity["metadata_json"])
+    extracted = entity.get("_extracted")
+    table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    for col in columns:
+        val = _get_column_value(entity, col, meta, extracted)
+        table.add_row(f"{col}:", val)
+    console.print(table)
+
+def _display_info_table(entities: list[dict], columns: list[str]) -> None:
+    meta_list = [json.loads(e["metadata_json"]) for e in entities]
+    extracted_list = [e.get("_extracted") for e in entities]
+    table = Table(*columns)
+    for i, entity in enumerate(entities):
+        row = [_get_column_value(entity, col, meta_list[i], extracted_list[i]) for col in columns]
+        table.add_row(*row)
+    console.print(table)
+
+def _print_available_columns() -> None:
+    table = Table("Column", "Description")
+    for key, desc in AVAILABLE_COLUMNS.items():
+        table.add_row(key, desc)
+    console.print(table)
+
 @app.command(name="info")
 def get_info(
-    full_path: str = typer.Argument(..., help="Exact entity full path"),
-    all_matches: bool = typer.Option(False, "--all", "-a", help="Return all matching entities (default returns only the first)"),
+    full_path: str = typer.Argument(None, help="Exact entity full path"),
+    all_matches: bool = typer.Option(False, "--all", "-a", help="Show all matching entities"),
+    columns: str = typer.Option(None, "--columns", "-c", help="Comma-separated columns to display (use --list-columns to see available)"),
+    list_columns: bool = typer.Option(False, "--list-columns", help="List available columns and descriptions"),
+    type_filter: str = typer.Option(None, "--type", "-t", help="Filter by entity type (e.g. FUNCTION, CLASS)"),
+    lineno: int = typer.Option(None, "--lineno", help="Filter by line number"),
+    extract: bool = typer.Option(False, "--extract", "-x", help="Extract and display actual source text for signature/docstring"),
 ) -> None:
+    if list_columns:
+        _print_available_columns()
+        return
+    if full_path is None:
+        console.print("[red]Missing argument 'FULL_PATH'.[/red]")
+        raise typer.Exit(code=1)
+
+    col_list = columns.split(",") if columns else DEFAULT_COLUMNS
+
     try:
-        result = get_entity_info(full_path, all_matches)
+        result = get_entity_info(
+            full_path,
+            all_matches=all_matches,
+            type_filter=type_filter,
+            lineno=lineno,
+            extract=extract,
+        )
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
@@ -109,18 +222,18 @@ def get_info(
         if not result:
             console.print(f"[red]Entity not found:[/red] {full_path}")
             raise typer.Exit()
-        table = Table("Full Path", "Language", "Type", "Source")
-        for row in result:
-            source = row.get("_source", "")
-            table.add_row(row["full_path"], row["language"], row["type"], source)
-        console.print(table)
-    else:
-        if result is None:
-            console.print(f"[red]Entity not found:[/red] {full_path}")
-            raise typer.Exit()
-        source = result.get("_source", "")
-        loc = f" @ {source}" if source else ""
-        console.print(f"{result['full_path']}  {result['language']}  {result['type']}{loc}")
+        _display_info_table(result, col_list)
+        return
+
+    if result is None:
+        console.print(f"[red]Entity not found:[/red] {full_path}")
+        raise typer.Exit()
+
+    match_count = result.pop("_match_count", 1)
+    _display_info_single(result, col_list, extract)
+
+    if match_count > 1 and not type_filter and lineno is None:
+        console.print(f"\n[dark_orange]Found {match_count} matching entities. Use --all to see all, or filter with --type / --lineno. See --help for details.[/dark_orange]")
 
 # TODO: Allow user to go back a step, and also go forward to the next step if they had gone back a path
 @app.command(name="resolve")
