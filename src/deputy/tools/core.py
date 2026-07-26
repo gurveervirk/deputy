@@ -215,8 +215,7 @@ def search_entities(
 def _compute_source(entity: dict, conn) -> str:
     meta = json.loads(entity["metadata_json"])
     if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
-        path = meta.get("path", "")
-        return path or ""
+        return meta.get("path", "")
     lineno = meta.get("lineno", "")
     if not lineno:
         return ""

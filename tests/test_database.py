@@ -5,6 +5,7 @@ from deputy.database.sqlite import (
     get_branch_files,
     get_entities_by_path,
     get_entity_by_path,
+    get_filtered_entities_by_path,
     upsert_branch_entities,
     upsert_branch_file,
     delete_branch_file,
@@ -104,6 +105,16 @@ class TestEntities:
         assert get_entity_by_path(db, "pkg.mod2.ClassA") is None
         assert get_entity_by_path(db, "pkg.mod.ClassA") is not None
 
+    def test_get_entities_by_path_sorted_by_lineno(self, db):
+        upsert_entity(db, id="e3", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":30}')
+        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":10}')
+        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":20}')
+        rows = get_entities_by_path(db, "mod.dup")
+        assert [r["id"] for r in rows] == ["e1", "e2", "e3"]
+
 class TestConfig:
     def test_set_and_get(self, db):
         set_config(db, "key1", "val1")
@@ -164,6 +175,58 @@ class TestBranchEntities:
         assert len(rows) == 1
         rows = get_entities_by_path(db, "pkg.mod.ClassA", branch_name="branch-b")
         assert len(rows) == 0
+
+class TestFilteredEntitiesByPath:
+    def test_type_filter(self, db):
+        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":10}')
+        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="CLASS",
+                      metadata_json='{"lineno":20}')
+        rows = get_filtered_entities_by_path(db, "mod.dup", type_filter="FUNCTION")
+        assert len(rows) == 1
+        assert rows[0]["id"] == "e1"
+
+    def test_lineno_filter(self, db):
+        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":10}')
+        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="CLASS",
+                      metadata_json='{"lineno":20}')
+        rows = get_filtered_entities_by_path(db, "mod.dup", lineno=20)
+        assert len(rows) == 1
+        assert rows[0]["id"] == "e2"
+
+    def test_type_and_lineno(self, db):
+        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":10}')
+        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="CLASS",
+                      metadata_json='{"lineno":20}')
+        upsert_entity(db, id="e3", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":30}')
+        rows = get_filtered_entities_by_path(db, "mod.dup", type_filter="FUNCTION", lineno=30)
+        assert len(rows) == 1
+        assert rows[0]["id"] == "e3"
+
+    def test_no_match(self, db):
+        rows = get_filtered_entities_by_path(db, "mod.dup", type_filter="VARIABLE")
+        assert len(rows) == 0
+
+    def test_scoped_by_branch(self, db, sample_entities):
+        upsert_branch_entities(db, "feature", ["id1", "id2"])
+        rows = get_filtered_entities_by_path(db, "pkg.mod.ClassA", branch_name="feature", type_filter="CLASS")
+        assert len(rows) == 1
+        assert rows[0]["id"] == "id1"
+        rows = get_filtered_entities_by_path(db, "pkg.mod.ClassA", branch_name="other", type_filter="CLASS")
+        assert len(rows) == 0
+
+    def test_sorted_by_lineno(self, db):
+        upsert_entity(db, id="e3", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":30}')
+        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":10}')
+        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
+                      metadata_json='{"lineno":20}')
+        rows = get_filtered_entities_by_path(db, "mod.dup")
+        assert [r["id"] for r in rows] == ["e1", "e2", "e3"]
 
 class TestSearchFilters:
     def test_type_filter(self, db, sample_entities):
