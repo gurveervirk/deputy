@@ -10,6 +10,10 @@ from deputy.database.sqlite import (
     get_entities_by_ids,
     get_entity_by_id,
 )
+from deputy.tools.utils import (
+    get_parent_id,
+    resolve_import_alias as shared_resolve_import_alias,
+)
 from deputy.logger import get_logger
 
 logger = get_logger("tools.resolve")
@@ -26,14 +30,6 @@ class InteractiveResolver:
         self.conn = conn
         self.mode = mode
         self.console = Console()
-
-    @staticmethod
-    def _get_parent_id(entity: dict) -> str | None:
-        pid = entity.get("parent_id")
-        if pid:
-            return pid
-        meta = json.loads(entity["metadata_json"])
-        return meta.get("parent_id")
 
     def resolve(self, module_fqn: str, symbol_name: str) -> dict | None:
         steps: list[ResolveStep] = []
@@ -84,7 +80,7 @@ class InteractiveResolver:
                     alias = aliases[0]
                     peek = self._peek_target(alias)
                     self._print_auto_trace(step, alias, peek)
-                next_module, next_symbol = self._follow_alias(alias)
+                next_module, next_symbol = shared_resolve_import_alias(self.conn, alias)
                 if not next_module:
                     self.console.print("[red]Could not resolve import path[/red]")
                     return None
@@ -101,7 +97,7 @@ class InteractiveResolver:
                 return choice["entity"]
 
             alias = choice["entity"]
-            next_module, next_symbol = self._follow_alias(alias)
+            next_module, next_symbol = shared_resolve_import_alias(self.conn, alias)
             if not next_module:
                 self.console.print("[red]Could not resolve import path[/red]")
                 return None
@@ -252,7 +248,7 @@ class InteractiveResolver:
         node = parent.add(label)
 
         import_stmt = None
-        parent_id = self._get_parent_id(entity)
+        parent_id = get_parent_id(entity)
         if parent_id:
             import_stmt = get_entity_by_id(self.conn, parent_id)
         if import_stmt:
@@ -284,7 +280,7 @@ class InteractiveResolver:
         parent.add(label)
 
     def _peek_target(self, alias: dict) -> dict | None:
-        target_module, symbol_name = self._follow_alias(alias)
+        target_module, symbol_name = shared_resolve_import_alias(self.conn, alias)
         if not target_module:
             return None
 
@@ -321,7 +317,7 @@ class InteractiveResolver:
         original = meta.get("original_name", entity["name"])
         alias_str = meta.get("alias")
         display_name = f"{original} as {alias_str}" if alias_str and alias_str != entity["name"] else original
-        parent_id = self._get_parent_id(entity)
+        parent_id = get_parent_id(entity)
         container_path = ""
         if parent_id:
             parent = get_entity_by_id(self.conn, parent_id)
@@ -329,72 +325,6 @@ class InteractiveResolver:
                 parent_meta = json.loads(parent["metadata_json"])
                 container_path = parent_meta.get("path", "")
         return f"{display_name} in {entity['full_path']}" + (f" ({container_path})" if container_path else "")
-
-    def _follow_alias(self, alias: dict) -> tuple[str | None, str | None]:
-        meta = json.loads(alias["metadata_json"])
-        parent_id = self._get_parent_id(alias)
-        import_name = meta.get("original_name", alias["name"])
-
-        if not parent_id:
-            return None, None
-
-        import_stmt = get_entity_by_id(self.conn, parent_id)
-        if not import_stmt:
-            return None, None
-
-        path = import_stmt["name"]
-
-        if path and path.startswith("."):
-            target_module = self._resolve_relative_import(import_stmt, path)
-        else:
-            target_module = path
-
-        if not target_module:
-            return None, None
-
-        return target_module, import_name
-
-    def _resolve_relative_import(self, import_stmt: dict, path: str) -> str | None:
-        parent_id = self._get_parent_id(import_stmt)
-
-        module_fqn = self._get_containing_module_fqn(parent_id)
-        if not module_fqn:
-            return None
-
-        is_package = self._module_is_package(module_fqn)
-
-        relative_parts = path.split(".")
-        parent_parts = module_fqn.split(".")
-        num_leading_dots = len(path) - len(path.lstrip("."))
-        levels_to_pop = num_leading_dots - (1 if is_package else 0)
-
-        for _ in range(levels_to_pop):
-            if parent_parts:
-                parent_parts.pop()
-
-        relative_parts = [p for p in relative_parts if p]
-        return ".".join(parent_parts + relative_parts)
-
-    def _get_containing_module_fqn(self, entity_id: str) -> str | None:
-        seen: set[str] = set()
-        current_id = entity_id
-        while current_id and current_id not in seen:
-            seen.add(current_id)
-            entity = get_entity_by_id(self.conn, current_id)
-            if not entity:
-                return None
-            if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
-                return entity["full_path"]
-            current_id = self._get_parent_id(entity)
-        return None
-
-    def _module_is_package(self, module_fqn: str) -> bool:
-        ids = get_entity_ids_by_fqn(self.conn, module_fqn)
-        for eid in ids:
-            entity = get_entity_by_id(self.conn, eid)
-            if entity and entity["type"] == "PACKAGE":
-                return True
-        return False
 
     def resolve_all(self, module_fqn: str, symbol_name: str) -> list[dict]:
         results: list[dict] = []
@@ -415,7 +345,7 @@ class InteractiveResolver:
         aliases = [e for e in entities if e["type"] == "IMPORT_ALIAS"]
         results.extend(concretes)
         for alias in aliases:
-            next_mod, next_sym = self._follow_alias(alias)
+            next_mod, next_sym = shared_resolve_import_alias(self.conn, alias)
             if next_mod:
                 self._collect_terminals(f"{next_mod}.{next_sym}", visited, results)
 
@@ -468,14 +398,14 @@ class InteractiveResolver:
             loc = f" @ {sp}:{lineno}" if sp and lineno else ""
             label = f"[yellow]IMPORT_ALIAS[/yellow] {alias['name']}{loc}"
             alias_node = root.add(label)
-            parent_id = self._get_parent_id(alias)
+            parent_id = get_parent_id(alias)
             from_line = ""
             if parent_id:
                 imp = get_entity_by_id(self.conn, parent_id)
                 if imp:
                     original = meta.get("original_name", alias["name"])
                     from_line = f"[dim]from {imp['name']} import {original}[/dim]"
-            next_mod, next_sym = self._follow_alias(alias)
+            next_mod, next_sym = shared_resolve_import_alias(self.conn, alias)
             if not next_mod:
                 if from_line:
                     alias_node.add(from_line)

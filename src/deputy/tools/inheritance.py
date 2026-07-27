@@ -11,80 +11,12 @@ from deputy.database.sqlite import (
 )
 from deputy.logger import get_logger
 from deputy.utils.git import get_current_branch
+from deputy.tools.utils import (
+    get_parent_id,
+    get_containing_module_fqn,
+)
 
 logger = get_logger("tools.inheritance")
-
-def get_parent_id(entity: dict) -> str | None:
-    pid = entity.get("parent_id")
-    if pid:
-        return pid
-    meta = json.loads(entity["metadata_json"])
-    return meta.get("parent_id")
-
-def get_containing_module_fqn(conn: sqlite3.Connection, entity_id: str) -> str | None:
-    seen: set[str] = set()
-    current_id = entity_id
-    while current_id and current_id not in seen:
-        seen.add(current_id)
-        entity = get_entity_by_id(conn, current_id)
-        if not entity:
-            return None
-        if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
-            return entity["full_path"]
-        current_id = get_parent_id(entity)
-    return None
-
-def module_is_package(conn: sqlite3.Connection, module_fqn: str) -> bool:
-    ids = get_entity_ids_by_fqn(conn, module_fqn)
-    for eid in ids:
-        entity = get_entity_by_id(conn, eid)
-        if entity and entity["type"] == "PACKAGE":
-            return True
-    return False
-
-def resolve_relative_import(conn: sqlite3.Connection, import_stmt: dict, path: str) -> str | None:
-    parent_id = get_parent_id(import_stmt)
-    module_fqn = get_containing_module_fqn(conn, parent_id) if parent_id else None
-    if not module_fqn:
-        return None
-
-    is_package = module_is_package(conn, module_fqn)
-
-    relative_parts = path.split(".")
-    parent_parts = module_fqn.split(".")
-    num_leading_dots = len(path) - len(path.lstrip("."))
-    levels_to_pop = num_leading_dots - (1 if is_package else 0)
-
-    for _ in range(levels_to_pop):
-        if parent_parts:
-            parent_parts.pop()
-
-    relative_parts = [p for p in relative_parts if p]
-    return ".".join(parent_parts + relative_parts)
-
-def resolve_import_alias(conn: sqlite3.Connection, alias: dict) -> tuple[str | None, str | None]:
-    meta = json.loads(alias["metadata_json"])
-    parent_id = get_parent_id(alias)
-    import_name = meta.get("original_name", alias["name"])
-
-    if not parent_id:
-        return None, None
-
-    import_stmt = get_entity_by_id(conn, parent_id)
-    if not import_stmt:
-        return None, None
-
-    path = import_stmt["name"]
-
-    if path and path.startswith("."):
-        target_module = resolve_relative_import(conn, import_stmt, path)
-    else:
-        target_module = path
-
-    if not target_module:
-        return None, None
-
-    return target_module, import_name
 
 def resolve_base_name_in_module(
     conn: sqlite3.Connection,
