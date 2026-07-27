@@ -36,6 +36,10 @@ from deputy.tools.utils import (
     _open_database,
     _process_files,
 )
+from deputy.tools.inheritance import (
+    resolve_all_inherits,
+    get_class_inheritance_info
+)
 from deputy.venv import (
     detect_venv,
     find_site_packages, 
@@ -104,6 +108,12 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
 
     for record in records:
         upsert_entity(conn, **record)
+
+    resolve_all_inherits(conn, records)
+
+    for record in records:
+        if record["type"] == "CLASS":
+            upsert_entity(conn, **record)
 
     upsert_branch_entities(conn, branch, [r["id"] for r in records])
     upsert_branch_entities(conn, branch, dep_ids)
@@ -305,6 +315,11 @@ def get_entity_info(
         row["_source"] = _compute_source(row, conn)
         if extract:
             row["_extracted"] = _extract_source_text(row, conn, base_path)
+        if row["type"] == "CLASS":
+            try:
+                row["_inheritance_info"] = get_class_inheritance_info(conn, row["id"])
+            except Exception:
+                logger.debug("failed to compute inheritance info for %s", row["full_path"], exc_info=True)
 
     conn.close()
 
