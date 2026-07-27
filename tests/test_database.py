@@ -2,12 +2,21 @@ from unittest.mock import patch
 from deputy.database.sqlite import (
     clean_orphan_entities,
     delete_branch_entities,
+    delete_class_bases_by_class,
+    delete_inheritance_pin,
+    get_direct_bases,
+    get_direct_subclasses,
+    get_inheritance_pin,
+    get_transitive_subclasses,
     get_branch_files,
     get_entities_by_path,
     get_entity_by_path,
     get_filtered_entities_by_path,
+    list_inheritance_pins,
     upsert_branch_entities,
     upsert_branch_file,
+    upsert_class_bases,
+    upsert_inheritance_pin,
     delete_branch_file,
     update_mtime,
     upsert_entity,
@@ -330,3 +339,106 @@ class TestDetectFileChanges:
         _, changed, mtime_only, deleted = _detect_file_changes(files, tracked, "/tmp", force=True)
         assert "src/deleted.py" in deleted
         assert "src/kept.py" in changed or "src/kept.py" in mtime_only
+
+class TestClassBases:
+    def test_upsert_and_get_direct_bases(self, db):
+        bases = [
+            {"base_full_path": "pkg.base.BaseA", "base_entity_id": "id_a", "is_resolved": True},
+            {"base_full_path": "pkg.mixins.Mixin", "base_entity_id": None, "is_resolved": False, "branch_info": '{"branch":"try"}'},
+        ]
+        upsert_class_bases(db, "class_foo", bases)
+        result = get_direct_bases(db, "class_foo")
+        assert len(result) == 2
+        assert result[0]["base_full_path"] == "pkg.base.BaseA"
+        assert result[0]["is_resolved"] == 1
+        assert result[1]["base_full_path"] == "pkg.mixins.Mixin"
+        assert result[1]["is_resolved"] == 0
+
+    def test_replaces_on_reupsert(self, db):
+        upsert_class_bases(db, "c1", [{"base_full_path": "pkg.Base", "base_entity_id": "old", "is_resolved": True}])
+        upsert_class_bases(db, "c1", [{"base_full_path": "pkg.Base", "base_entity_id": "new", "is_resolved": True}])
+        result = get_direct_bases(db, "c1")
+        assert len(result) == 1
+        assert result[0]["base_entity_id"] == "new"
+
+    def test_delete_class_bases(self, db):
+        upsert_class_bases(db, "c1", [{"base_full_path": "pkg.Base", "is_resolved": True}])
+        delete_class_bases_by_class(db, "c1")
+        assert get_direct_bases(db, "c1") == []
+
+    def test_isolated_by_class(self, db):
+        upsert_class_bases(db, "c1", [{"base_full_path": "pkg.Base", "is_resolved": True}])
+        upsert_class_bases(db, "c2", [{"base_full_path": "pkg.Base", "is_resolved": True}])
+        assert len(get_direct_bases(db, "c1")) == 1
+        assert len(get_direct_bases(db, "c2")) == 1
+
+    def test_get_direct_subclasses(self, db, sample_entities):
+        upsert_class_bases(db, "id1", [{"base_full_path": "pkg.base.Base", "base_entity_id": None, "is_resolved": True}])
+        upsert_class_bases(db, "id4", [{"base_full_path": "pkg.base.Base", "base_entity_id": None, "is_resolved": True}])
+        subs = get_direct_subclasses(db, "pkg.base.Base")
+        paths = {s["full_path"] for s in subs}
+        assert paths == {"pkg.mod.ClassA", "pkg.mod2.ClassA"}
+
+    def test_get_direct_subclasses_scoped(self, db, sample_entities):
+        upsert_branch_entities(db, "br", ["id1"])
+        upsert_class_bases(db, "id1", [{"base_full_path": "pkg.Base", "is_resolved": True}])
+        upsert_class_bases(db, "id4", [{"base_full_path": "pkg.Base", "is_resolved": True}])
+        subs = get_direct_subclasses(db, "pkg.Base", branch_name="br")
+        assert len(subs) == 1
+        assert subs[0]["id"] == "id1"
+
+    def test_transitive_subclasses(self, db, sample_entities):
+        upsert_class_bases(db, "id4", [{"base_full_path": "pkg.mod.ClassA", "base_entity_id": "id1", "is_resolved": True}])
+        subs = get_transitive_subclasses(db, "pkg.mod.ClassA")
+        assert len(subs) == 1
+        assert subs[0]["id"] == "id4"
+
+    def test_transitive_subclasses_multi_level(self, db, sample_entities):
+        upsert_entity(db, id="id6", language="python", full_path="pkg.mod3.ClassC", name="ClassC", type="CLASS",
+                      metadata_json='{"fqn":"pkg.mod3.ClassC","lineno":1}')
+        upsert_class_bases(db, "id4", [{"base_full_path": "pkg.mod.ClassA", "base_entity_id": "id1", "is_resolved": True}])
+        upsert_class_bases(db, "id6", [{"base_full_path": "pkg.mod2.ClassA", "base_entity_id": "id4", "is_resolved": True}])
+        subs = get_transitive_subclasses(db, "pkg.mod.ClassA", branch_name=None)
+        paths = {s["full_path"] for s in subs}
+        assert "pkg.mod2.ClassA" in paths
+        assert "pkg.mod3.ClassC" in paths
+
+class TestInheritancePins:
+    def test_upsert_and_get(self, db):
+        upsert_inheritance_pin(db, "class1", "Base", "entity_a", "main")
+        pin = get_inheritance_pin(db, "class1", "Base", "main")
+        assert pin is not None
+        assert pin["pinned_entity_id"] == "entity_a"
+
+    def test_replaces_on_reupsert(self, db):
+        upsert_inheritance_pin(db, "class1", "Base", "old", "main")
+        upsert_inheritance_pin(db, "class1", "Base", "new", "main")
+        pin = get_inheritance_pin(db, "class1", "Base", "main")
+        assert pin["pinned_entity_id"] == "new"
+
+    def test_isolated_by_branch(self, db):
+        upsert_inheritance_pin(db, "class1", "Base", "entity_a", "main")
+        upsert_inheritance_pin(db, "class1", "Base", "entity_b", "other")
+        pin_main = get_inheritance_pin(db, "class1", "Base", "main")
+        pin_other = get_inheritance_pin(db, "class1", "Base", "other")
+        assert pin_main["pinned_entity_id"] == "entity_a"
+        assert pin_other["pinned_entity_id"] == "entity_b"
+
+    def test_delete(self, db):
+        upsert_inheritance_pin(db, "class1", "Base", "entity_a", "main")
+        delete_inheritance_pin(db, "class1", "Base", "main")
+        assert get_inheritance_pin(db, "class1", "Base", "main") is None
+
+    def test_get_missing(self, db):
+        assert get_inheritance_pin(db, "nonexistent", "Base", "main") is None
+
+    def test_list_pins(self, db, sample_entities):
+        upsert_inheritance_pin(db, "id1", "Base", "e1", "main")
+        upsert_inheritance_pin(db, "id5", "Mixin", "e2", "main")
+        pins = list_inheritance_pins(db, "main")
+        assert len(pins) == 2
+        paths = {p["class_full_path"] for p in pins}
+        assert paths == {"pkg.mod.ClassA", "pkg.mod2"}
+
+    def test_list_pins_empty_branch(self, db):
+        assert list_inheritance_pins(db, "nonexistent") == []
