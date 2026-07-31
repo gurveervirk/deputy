@@ -12,6 +12,7 @@ from deputy.database.sqlite import (
     get_config,
     get_dependency,
     get_entities_by_path,
+    get_entity_by_path,
     get_filtered_entities_by_path,
     get_dependency_entity_ids,
     get_entity_by_id,
@@ -38,7 +39,9 @@ from deputy.tools.utils import (
 )
 from deputy.tools.inheritance import (
     resolve_all_inherits,
-    get_class_inheritance_info
+    get_class_inheritance_info,
+    resolve_entity_through_mro,
+    eager_resolve_all_inherited_members,
 )
 from deputy.venv import (
     detect_venv,
@@ -114,6 +117,8 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     for record in records:
         if record["type"] == "CLASS":
             upsert_entity(conn, **record)
+
+    eager_resolve_all_inherited_members(conn, records, branch)
 
     upsert_branch_entities(conn, branch, [r["id"] for r in records])
     upsert_branch_entities(conn, branch, dep_ids)
@@ -226,6 +231,13 @@ def _compute_source(entity: dict, conn) -> str:
     meta = json.loads(entity["metadata_json"])
     if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
         return meta.get("path", "")
+    if entity["type"] == "INHERITED_MEMBER":
+        target_id = meta.get("target_entity_id")
+        if target_id:
+            target = get_entity_by_id(conn, target_id)
+            if target:
+                return _compute_source(target, conn)
+        return ""
     lineno = meta.get("lineno", "")
     if not lineno:
         return ""
@@ -307,11 +319,37 @@ def get_entity_info(
         results = get_entities_by_path(conn, full_path, branch_name=branch)
 
     if not results:
-        conn.close()
-        return [] if all_matches else None
+        if type_filter or lineno:
+            any_entity = get_entity_by_path(conn, full_path, branch_name=branch)
+            if any_entity is not None:
+                conn.close()
+                return [] if all_matches else None
+        entity, _ = resolve_entity_through_mro(conn, full_path)
+        if entity is not None:
+            results = [entity]
+        else:
+            conn.close()
+            return [] if all_matches else None
 
     base_path = get_config(conn, "base_path") or os.getcwd()
-    for row in results:
+    for i, row in enumerate(results):
+        if row["type"] == "INHERITED_MEMBER":
+            meta = json.loads(row["metadata_json"])
+            target_id = meta.get("target_entity_id")
+            if target_id:
+                target = get_entity_by_id(conn, target_id)
+                if target:
+                    target = dict(target)
+                    inherited_from = meta.get("inherited_from", "")
+                    mro_depth = meta.get("mro_depth", 0)
+                    target["_inherited_from"] = inherited_from
+                    target["_mro_depth"] = mro_depth
+                    target["_source"] = _compute_source(target, conn)
+                    target["inherited_via_alias"] = row["full_path"]
+                    if extract:
+                        target["_extracted"] = _extract_source_text(target, conn, base_path)
+                    results[i] = target
+                    continue
         row["_source"] = _compute_source(row, conn)
         if extract:
             row["_extracted"] = _extract_source_text(row, conn, base_path)

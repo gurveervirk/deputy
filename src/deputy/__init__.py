@@ -4,15 +4,16 @@ from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
 from deputy._version import __version__
-from deputy.logger import init_logging
 from deputy.database.sqlite import (
     get_direct_subclasses,
     get_transitive_subclasses,
     get_entity_ids_by_fqn,
     upsert_inheritance_pin,
+    get_inheritance_pin,
     delete_inheritance_pin,
     list_inheritance_pins,
     get_entity_by_id,
+    upsert_class_bases,
 )
 from deputy.tools import (
     build_entity_tree,
@@ -22,11 +23,20 @@ from deputy.tools import (
     get_entity_info,
     InteractiveResolver,
 )
-from deputy.tools.utils import _open_database
-from deputy.tools.utils import get_containing_module_fqn
-from deputy.utils.config_file import read_config, write_config
+from deputy.tools.utils import (
+    get_containing_module_fqn,
+    _open_database
+)
+from deputy.logger import (
+    get_logger,
+    init_logging
+)
+from deputy.utils.config_file import (
+    read_config,
+    write_config
+)
+from deputy.tools.inheritance import eager_resolve_all_inherited_members
 from deputy.utils.git import get_current_branch
-from deputy.logger import get_logger
 
 logger = get_logger("cli")
 
@@ -46,6 +56,7 @@ AVAILABLE_COLUMNS = {
     "resolved_bases": "Resolved base class FQNs",
     "unresolved_bases": "Unresolved base class names with candidate details",
     "mro": "Full MRO (method resolution order) chain",
+    "inherited_from": "Class in the MRO that provides this member (if inherited)",
     "visibility": "Visibility modifier",
     "exported": "Whether exported in __all__",
 }
@@ -176,6 +187,17 @@ def _get_column_value(entity: dict, col: str, meta: dict, extracted: dict | None
         return _format_unresolved_bases(entity)
     if col == "mro":
         return _format_mro(entity)
+    if col == "inherited_from":
+        inherited = entity.get("_inherited_from", "")
+        if inherited:
+            idx = entity.get("_mro_index", 0)
+            return f"{inherited} (MRO depth {idx})"
+        if entity.get("type") == "INHERITED_MEMBER":
+            meta_inherited = meta.get("inherited_from", "")
+            if meta_inherited:
+                depth = meta.get("mro_depth", 0)
+                return f"{meta_inherited} (MRO depth {depth})"
+        return ""
     return ""
 
 def _format_resolved_bases(entity: dict) -> str:
@@ -407,13 +429,28 @@ def pin_inheritance(
         for eid in ids:
             entity = get_entity_by_id(conn, eid)
             if entity and entity["type"] == "CLASS":
+                pin = get_inheritance_pin(conn, eid, base_name, branch)
+                if pin:
+                    pinned_entity = get_entity_by_id(conn, pin["pinned_entity_id"])
+                    if pinned_entity:
+                        conn.execute(
+                            "DELETE FROM class_bases WHERE class_entity_id = ? AND base_full_path = ?",
+                            (eid, pinned_entity["full_path"]),
+                        )
+                        upsert_class_bases(conn, eid, [{
+                            "base_full_path": base_name,
+                            "base_entity_id": None,
+                            "is_resolved": False,
+                        }])
                 delete_inheritance_pin(conn, eid, base_name, branch)
                 console.print(f"[green]Removed pin for[/green] {class_fqn}:{base_name}")
                 break
         else:
             console.print(f"[red]Class not found:[/red] {class_fqn}")
             raise typer.Exit(code=1)
+        eager_resolve_all_inherited_members(conn, records=None, branch=branch)
         conn.commit()
+        console.print(f"[dim]Inherited member aliases re-resolved after pin removal[/dim]")
         conn.close()
         return
 
@@ -435,7 +472,6 @@ def pin_inheritance(
         raise typer.Exit(code=1)
 
     parts = entity_ref.rsplit(":", 2)
-    file_path = parts[0]
     lineno = int(parts[1]) if len(parts) > 1 else None
     col_offset = int(parts[2]) if len(parts) > 2 else None
 
@@ -460,12 +496,10 @@ def pin_inheritance(
 
     rows = conn.execute(
         """SELECT id FROM entities
-           WHERE json_extract(metadata_json, '$.lineno') = ?
-           AND type = 'IMPORT_ALIAS'
-           AND parent_id IN (
-               SELECT id FROM entities WHERE full_path = ?
-           )""",
-        (lineno, module_fqn),
+           WHERE type = 'IMPORT_ALIAS'
+           AND full_path = ?
+           AND json_extract(metadata_json, '$.lineno') = ?""",
+        (f"{module_fqn}.{base_name}", lineno),
     ).fetchall()
     candidates = [dict(r) for r in rows]
 
@@ -483,11 +517,42 @@ def pin_inheritance(
         console.print(f"[red]Multiple entities found at {entity_ref}. Provide col_offset to disambiguate.[/red]")
         raise typer.Exit(code=1)
 
-    pinned_entity_id = candidates[0]["id"]
+    import_alias_entity = get_entity_by_id(conn, candidates[0]["id"])
+    alias_meta = json.loads(import_alias_entity["metadata_json"])
+    import_stmt = get_entity_by_id(conn, import_alias_entity["parent_id"])
+    if import_stmt:
+        import_path = import_stmt.get("name", "")
+        original_name = alias_meta.get("original_name", "")
+        target_fqn = f"{import_path}.{original_name}"
+        target_ids = get_entity_ids_by_fqn(conn, target_fqn)
+        target_entity = None
+        for tid in target_ids:
+            te = get_entity_by_id(conn, tid)
+            if te and te["type"] == "CLASS":
+                target_entity = te
+                break
+        if target_entity:
+            pinned_entity_id = target_entity["id"]
+        else:
+            pinned_entity_id = import_alias_entity["id"]
+    else:
+        pinned_entity_id = import_alias_entity["id"]
     upsert_inheritance_pin(conn, class_entity_id, base_name, pinned_entity_id, branch)
+    conn.execute(
+        "DELETE FROM class_bases WHERE class_entity_id = ? AND base_full_path = ?",
+        (class_entity_id, base_name),
+    )
+    pinned_fqn = target_entity["full_path"] if target_entity else base_name
+    upsert_class_bases(conn, class_entity_id, [{
+        "base_full_path": pinned_fqn,
+        "base_entity_id": pinned_entity_id,
+        "is_resolved": True,
+    }])
+    eager_resolve_all_inherited_members(conn, records=None, branch=branch)
     conn.commit()
-    conn.close()
     console.print(f"[green]Pinned[/green] {class_fqn}:{base_name} → {entity_ref}")
+    console.print(f"[dim]Inherited member aliases re-resolved after pin[/dim]")
+    conn.close()
 
 @app.command()
 def config(
