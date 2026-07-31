@@ -22,6 +22,7 @@ from deputy.tools.utils import (
 logger = get_logger("tools.inheritance")
 
 def _resolve_alias_target(conn: sqlite3.Connection, alias_entity: dict) -> tuple[str | None, str | None]:
+    """Resolve an IMPORT_ALIAS entity to the FQN and entity ID of its target class/function."""
     meta = json.loads(alias_entity["metadata_json"])
     original_name = meta.get("original_name", alias_entity.get("name", ""))
     parent_id = alias_entity.get("parent_id")
@@ -46,6 +47,7 @@ def resolve_base_name_in_module(
     module_fqn: str,
     class_lineno: int | None = None,
 ) -> list[dict]:
+    """Find all candidate entities (IMPORT_ALIAS or CLASS) in a module that match a base class name."""
     module_ids = get_entity_ids_by_fqn(conn, module_fqn)
     if not module_ids:
         return []
@@ -118,6 +120,7 @@ def _classify_candidate_scope(conn: sqlite3.Connection, entity: dict) -> str:
     return "module_level"
 
 def pick_closest_module_level_candidate(candidates: list[dict]) -> dict | None:
+    """Return the module-level candidate closest to (just before) the class definition."""
     module_level = [c for c in candidates if c["scope"] == "module_level"]
     if not module_level:
         return None
@@ -125,6 +128,7 @@ def pick_closest_module_level_candidate(candidates: list[dict]) -> dict | None:
     return module_level[0]
 
 def has_multiple_candidates(candidates: list[dict]) -> bool:
+    """Return True if multiple module-level candidates exist (ambiguous import)."""
     module_level = [c for c in candidates if c["scope"] == "module_level"]
     return len(module_level) > 1
 
@@ -132,6 +136,7 @@ def resolve_all_inherits(
     conn: sqlite3.Connection,
     records: list[dict],
 ) -> None:
+    """Resolve base classes for all CLASS records and write results to class_bases table."""
     class_records = [r for r in records if r["type"] == "CLASS"]
 
     for record in class_records:
@@ -233,6 +238,7 @@ def resolve_all_inherits(
         record["metadata_json"] = json.dumps(meta, default=str)
 
 def clean_inherited_member_entities(conn: sqlite3.Connection) -> None:
+    """Delete all INHERITED_MEMBER synthetic entities from the database."""
     conn.execute(
         "DELETE FROM entities WHERE json_extract(metadata_json, '$.inherited') = 1"
     )
@@ -343,6 +349,7 @@ def _create_synthetic_entity(
     conn: sqlite3.Connection,
     branch: str,
 ) -> dict | None:
+    """Create an INHERITED_MEMBER synthetic entity pointing to a target member from a base class."""
     own_name = target.get("name", "")
     if not own_name:
         return None
@@ -466,6 +473,7 @@ def eager_resolve_all_inherited_members(
     records: list[dict] | None = None,
     branch: str | None = None,
 ) -> None:
+    """Clean all inherited members and recreate them via Pass 1 (direct MRO) and Pass 2 (inner class MRO)."""
     if not branch:
         import os
         branch = os.environ.get("DEPUTY_BRANCH", "default")
@@ -517,6 +525,7 @@ def compute_class_mro(
     memo: dict[str, list[str] | None] | None = None,
     _visiting: set[str] | None = None,
 ) -> list[str] | None:
+    """Compute the C3 linearization MRO for a class. Returns None if any base in the prefix is unresolvable."""
     if memo is None:
         memo = {}
     if _visiting is None:
@@ -603,7 +612,7 @@ def get_inherited_members(
     class_entity_id: str,
     mro_fqns: list[str] | None = None,
 ) -> dict[str, list[dict]]:
-
+    """Collect inherited methods, properties, and inner types from the MRO, deduped by name."""
     if mro_fqns is None:
         mro = compute_class_mro(conn, class_entity_id)
     else:
@@ -667,6 +676,7 @@ def get_class_inheritance_info(
     conn: sqlite3.Connection,
     class_entity_id: str,
 ) -> dict:
+    """Return full inheritance info: MRO, resolved/unresolved bases, and inherited members."""
     mro = compute_class_mro(conn, class_entity_id)
     direct_bases = get_direct_bases(conn, class_entity_id)
 
@@ -704,6 +714,7 @@ def resolve_entity_through_mro(
     conn: sqlite3.Connection,
     full_path: str,
 ) -> tuple[dict | None, str | None]:
+    """Resolve a dotted path (e.g. Child.Inner.foo) through the MRO chain. Returns (entity, inherited_from_fqn)."""
     entity = get_entity_by_path(conn, full_path)
     if entity is not None:
         return entity, None
