@@ -34,6 +34,7 @@ nav:
   - Getting Started:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
+      - Agent Skills: getting-started/agent-skills.md
   - Commands:
       - Commands Overview: commands/overview.md
       - init: commands/init.md

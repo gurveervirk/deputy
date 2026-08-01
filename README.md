@@ -52,6 +52,21 @@ uv sync
 uv run pytest
 ```
 
+## Agent Skills
+
+deputy ships an [Agent Skills](https://agentskills.io) definition at `.agents/skills/deputy/SKILL.md`. This teaches AI coding agents how to use deputy for code intelligence tasks.
+
+**Supported agents:** Claude Code, OpenCode, Cursor, GitHub Copilot, VS Code, Codex, Gemini CLI, Junie, and 20+ others.
+
+**Auto-discovery:** When an agent works in this repository, the skill is discovered automatically.
+
+**Install in other projects:**
+
+```bash
+npx skills add gurveervirk/deputy
+```
+
+
 ## License
 
 See [LICENSE](LICENSE).
