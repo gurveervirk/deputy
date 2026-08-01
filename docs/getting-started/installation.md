@@ -9,13 +9,13 @@ deputy requires Python 3.12+ and works best with the [`uv`](https://docs.astral.
 ## pip
 
 ```bash
-pip install deputy
+pip install deputy-cli
 ```
 
 ## uv tool install
 
 ```bash
-uv tool install deputy
+uv tool install deputy-cli
 ```
 
 This installs deputy globally as a standalone CLI tool, isolated from your project dependencies.

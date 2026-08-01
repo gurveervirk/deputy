@@ -9,9 +9,9 @@ Code intelligence CLI for Python. Parses source files with [deproc](https://gith
 ## Install
 
 ```bash
-pip install deputy
+pip install deputy-cli
 # or
-uv tool install deputy
+uv tool install deputy-cli
 ```
 
 ## Quick start
@@ -30,9 +30,4 @@ deputy resolve deputy.utils.storage.FileMetadata
 - [Quick Start](getting-started/quickstart.md) - basic workflow walkthrough
 - [Commands](commands/overview.md) - full command reference
 - [Inheritance Guide](guides/inheritance.md) - understanding class hierarchy resolution
-
-- [Installation](getting-started/installation.md) - setup and prerequisites
-- [Quick Start](getting-started/quickstart.md) - basic workflow
-- [Commands](commands/overview.md) - full command reference
-- [Inheritance Guide](guides/inheritance.md) - class hierarchy resolution
 - [Database Schema](reference/database.md) - tables and entity metadata

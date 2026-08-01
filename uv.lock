@@ -75,7 +75,7 @@ dependencies = [
 requires-dist = [{ name = "tree-sitter", specifier = "==0.25.2" }]
 
 [[package]]
-name = "deputy"
+name = "deputy-cli"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

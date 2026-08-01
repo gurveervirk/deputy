@@ -7,8 +7,8 @@ Code intelligence CLI for Python. Parses source files with [deproc](https://gith
 ## Installation
 
 ```bash
-pip install deputy
-# or: uv tool install deputy
+pip install deputy-cli
+# or: uv tool install deputy-cli
 ```
 
 ## Quick start
