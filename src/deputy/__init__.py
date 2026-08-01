@@ -208,10 +208,18 @@ def _format_resolved_bases(entity: dict) -> str:
     return ", ".join(b["base_full_path"] for b in resolved)
 
 def _format_unresolved_bases(entity: dict) -> str:
+    """Format unresolved bases for info display.
+
+    TODO: add --unresolved flag to search command for discovering classes with
+    unresolved bases; also handle qualified base names (e.g. c.Y) in
+    resolve_all_inherits and pin-inheritance
+    """
     info = entity.get("_inheritance_info")
     if not info:
         return ""
     unresolved = info.get("unresolved_bases", [])
+    if not unresolved:
+        return ""
     parts = []
     for ub in unresolved:
         candidates = ub.get("candidates", [])
@@ -221,12 +229,37 @@ def _format_unresolved_bases(entity: dict) -> str:
                 scope = c.get("scope", "")
                 loc = f"{c.get('full_path', '?')}"
                 if "conditional" in scope:
-                    loc += f" [{scope}]"
+                    loc += f" (conditional)"
                 cand_info.append(loc)
             parts.append(f"{ub['base_full_path']}: {', '.join(cand_info)}")
         else:
             parts.append(f"{ub['base_full_path']}: [no candidates]")
-    return "; ".join(parts)
+    entity_fqn = entity.get("full_path", "")
+    hint = f"\nHint: use 'deputy resolve <module>.<name>' to trace imports, then 'deputy pin-inheritance {entity_fqn} <name> <file>:<line>' to pin"
+    return "; ".join(parts) + hint
+
+
+def _print_unresolved_hint(entity: dict) -> None:
+    info = entity.get("_inheritance_info")
+    if not info:
+        return
+    unresolved = info.get("unresolved_bases", [])
+    if not unresolved:
+        return
+    base_labels = []
+    for ub in unresolved:
+        candidates = ub.get("candidates", [])
+        if candidates:
+            scope = candidates[0].get("scope", "")
+            label = ub["base_full_path"]
+            if "conditional" in scope:
+                label += " (conditional)"
+            base_labels.append(label)
+        else:
+            base_labels.append(f"{ub['base_full_path']} [no candidates]")
+    entity_fqn = entity.get("full_path", "")
+    console.print(f"\n[bold]Found unresolved bases:[/bold] {', '.join(base_labels)}")
+    console.print(f"[dim]Hint: use 'deputy resolve <module>.<name>' to trace imports, then 'deputy pin-inheritance {entity_fqn} <name> <file>:<line>' to pin[/dim]")
 
 
 def _format_mro(entity: dict) -> str:
@@ -246,6 +279,10 @@ def _display_info_single(entity: dict, columns: list[str], extract: bool) -> Non
         val = _get_column_value(entity, col, meta, extracted)
         table.add_row(f"{col}:", val)
     console.print(table)
+    if entity.get("type") == "CLASS" and "unresolved_bases" not in columns:
+        info = entity.get("_inheritance_info")
+        if info and info.get("unresolved_bases"):
+            _print_unresolved_hint(entity)
 
 def _display_info_table(entities: list[dict], columns: list[str]) -> None:
     meta_list = [json.loads(e["metadata_json"]) for e in entities]
