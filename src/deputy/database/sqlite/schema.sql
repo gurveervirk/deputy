@@ -58,3 +58,23 @@ CREATE TABLE IF NOT EXISTS branch_entities (
 
 CREATE INDEX IF NOT EXISTS idx_branch_entities_entity ON branch_entities(entity_id);
 
+CREATE TABLE IF NOT EXISTS class_bases (
+    class_entity_id  TEXT NOT NULL,
+    base_full_path   TEXT NOT NULL,
+    base_entity_id   TEXT,
+    is_resolved      INTEGER NOT NULL DEFAULT 0,
+    branch_info      TEXT,
+    PRIMARY KEY (class_entity_id, base_full_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_bases_class ON class_bases(class_entity_id);
+CREATE INDEX IF NOT EXISTS idx_class_bases_base ON class_bases(base_full_path);
+
+CREATE TABLE IF NOT EXISTS inheritance_pins (
+    class_entity_id  TEXT NOT NULL,
+    base_name        TEXT NOT NULL,
+    pinned_entity_id TEXT NOT NULL,
+    branch_name      TEXT NOT NULL,
+    PRIMARY KEY (class_entity_id, base_name, branch_name)
+);
+

@@ -334,5 +334,127 @@ def delete_branch_entities_by_entity_ids(conn: sqlite3.Connection, branch_name: 
         (branch_name, *entity_ids),
     )
 
+def upsert_class_bases(
+    conn: sqlite3.Connection,
+    class_entity_id: str,
+    bases: list[dict],
+) -> None:
+    for base in bases:
+        conn.execute(
+            """INSERT OR REPLACE INTO class_bases
+               (class_entity_id, base_full_path, base_entity_id, is_resolved, branch_info)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                class_entity_id,
+                base["base_full_path"],
+                base.get("base_entity_id"),
+                1 if base.get("is_resolved") else 0,
+                base.get("branch_info"),
+            ),
+        )
+
+def delete_class_bases_by_class(conn: sqlite3.Connection, class_entity_id: str) -> None:
+    conn.execute(
+        "DELETE FROM class_bases WHERE class_entity_id = ?",
+        (class_entity_id,),
+    )
+
+def get_direct_bases(
+    conn: sqlite3.Connection, class_entity_id: str
+) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM class_bases WHERE class_entity_id = ? ORDER BY rowid",
+        (class_entity_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+def get_direct_subclasses(
+    conn: sqlite3.Connection, base_full_path: str, branch_name: str | None = None
+) -> list[dict]:
+    if branch_name:
+        rows = conn.execute(
+            """SELECT DISTINCT e.* FROM entities e
+               JOIN class_bases cb ON e.id = cb.class_entity_id
+               JOIN branch_entities be ON e.id = be.entity_id
+               WHERE cb.base_full_path = ? AND be.branch_name = ?""",
+            (base_full_path, branch_name),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT DISTINCT e.* FROM entities e
+               JOIN class_bases cb ON e.id = cb.class_entity_id
+               WHERE cb.base_full_path = ?""",
+            (base_full_path,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+def get_transitive_subclasses(
+    conn: sqlite3.Connection, base_full_path: str, branch_name: str | None = None
+) -> list[dict]:
+    seen: set[str] = set()
+    results: list[dict] = []
+    todo = [base_full_path]
+    while todo:
+        current = todo.pop()
+        subs = get_direct_subclasses(conn, current, branch_name=branch_name)
+        for sub in subs:
+            if sub["full_path"] not in seen:
+                seen.add(sub["full_path"])
+                results.append(sub)
+                todo.append(sub["full_path"])
+    return results
+
+def upsert_inheritance_pin(
+    conn: sqlite3.Connection,
+    class_entity_id: str,
+    base_name: str,
+    pinned_entity_id: str,
+    branch_name: str,
+) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO inheritance_pins
+           (class_entity_id, base_name, pinned_entity_id, branch_name)
+           VALUES (?, ?, ?, ?)""",
+        (class_entity_id, base_name, pinned_entity_id, branch_name),
+    )
+
+def get_inheritance_pin(
+    conn: sqlite3.Connection,
+    class_entity_id: str,
+    base_name: str,
+    branch_name: str,
+) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM inheritance_pins WHERE class_entity_id = ? AND base_name = ? AND branch_name = ?",
+        (class_entity_id, base_name, branch_name),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+def delete_inheritance_pin(
+    conn: sqlite3.Connection,
+    class_entity_id: str,
+    base_name: str,
+    branch_name: str,
+) -> None:
+    conn.execute(
+        "DELETE FROM inheritance_pins WHERE class_entity_id = ? AND base_name = ? AND branch_name = ?",
+        (class_entity_id, base_name, branch_name),
+    )
+
+def list_inheritance_pins(
+    conn: sqlite3.Connection, branch_name: str
+) -> list[dict]:
+    rows = conn.execute(
+        """SELECT ip.*, e.full_path AS class_full_path, e.name AS class_name
+           FROM inheritance_pins ip
+           LEFT JOIN entities e ON e.id = ip.class_entity_id
+           WHERE ip.branch_name = ?
+           ORDER BY e.full_path""",
+        (branch_name,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
 def clean_orphan_entities(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM branch_entities)")

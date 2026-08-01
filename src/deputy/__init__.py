@@ -2,8 +2,19 @@ import json
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.tree import Tree
 from deputy._version import __version__
-from deputy.logger import init_logging
+from deputy.database.sqlite import (
+    get_direct_subclasses,
+    get_transitive_subclasses,
+    get_entity_ids_by_fqn,
+    upsert_inheritance_pin,
+    get_inheritance_pin,
+    delete_inheritance_pin,
+    list_inheritance_pins,
+    get_entity_by_id,
+    upsert_class_bases,
+)
 from deputy.tools import (
     build_entity_tree,
     init_database,
@@ -12,8 +23,22 @@ from deputy.tools import (
     get_entity_info,
     InteractiveResolver,
 )
-from deputy.tools.utils import _open_database
-from deputy.utils.config_file import read_config, write_config
+from deputy.tools.utils import (
+    get_containing_module_fqn,
+    _open_database
+)
+from deputy.logger import (
+    get_logger,
+    init_logging
+)
+from deputy.utils.config_file import (
+    read_config,
+    write_config
+)
+from deputy.tools.inheritance import eager_resolve_all_inherited_members
+from deputy.utils.git import get_current_branch
+
+logger = get_logger("cli")
 
 AVAILABLE_COLUMNS = {
     "full_path": "Entity full path",
@@ -28,6 +53,10 @@ AVAILABLE_COLUMNS = {
     "docstring": "Docstring location as path:line or path:start-end (actual text with --extract)",
     "decorators": "Decorator names",
     "parent_classes": "Parent/inherited class names",
+    "resolved_bases": "Resolved base class FQNs",
+    "unresolved_bases": "Unresolved base class names with candidate details",
+    "mro": "Full MRO (method resolution order) chain",
+    "inherited_from": "Class in the MRO that provides this member (if inherited)",
     "visibility": "Visibility modifier",
     "exported": "Whether exported in __all__",
 }
@@ -152,16 +181,95 @@ def _get_column_value(entity: dict, col: str, meta: dict, extracted: dict | None
         return meta.get("visibility", "")
     if col == "exported":
         return str(meta.get("exported", ""))
+    if col == "resolved_bases":
+        return _format_resolved_bases(entity)
+    if col == "unresolved_bases":
+        return _format_unresolved_bases(entity)
+    if col == "mro":
+        return _format_mro(entity)
+    if col == "inherited_from":
+        inherited = entity.get("_inherited_from", "")
+        if inherited:
+            idx = entity.get("_mro_index", 0)
+            return f"{inherited} (MRO depth {idx})"
+        if entity.get("type") == "INHERITED_MEMBER":
+            meta_inherited = meta.get("inherited_from", "")
+            if meta_inherited:
+                depth = meta.get("mro_depth", 0)
+                return f"{meta_inherited} (MRO depth {depth})"
+        return ""
     return ""
-    if col == "decorators":
-        return ", ".join(meta.get("decorators", []))
-    if col == "parent_classes":
-        return ", ".join(meta.get("parent_classes", []))
-    if col == "visibility":
-        return meta.get("visibility", "")
-    if col == "exported":
-        return str(meta.get("exported", ""))
-    return ""
+
+def _format_resolved_bases(entity: dict) -> str:
+    info = entity.get("_inheritance_info")
+    if not info:
+        return ""
+    resolved = info.get("resolved_bases", [])
+    return ", ".join(b["base_full_path"] for b in resolved)
+
+def _format_unresolved_bases(entity: dict) -> str:
+    """Format unresolved bases for info display.
+
+    TODO: add --unresolved flag to search command for discovering classes with
+    unresolved bases; also handle qualified base names (e.g. c.Y) in
+    resolve_all_inherits and pin-inheritance
+    """
+    info = entity.get("_inheritance_info")
+    if not info:
+        return ""
+    unresolved = info.get("unresolved_bases", [])
+    if not unresolved:
+        return ""
+    parts = []
+    for ub in unresolved:
+        candidates = ub.get("candidates", [])
+        if candidates:
+            cand_info = []
+            for c in candidates:
+                scope = c.get("scope", "")
+                loc = f"{c.get('full_path', '?')}"
+                if "conditional" in scope:
+                    loc += f" (conditional)"
+                cand_info.append(loc)
+            parts.append(f"{ub['base_full_path']}: {', '.join(cand_info)}")
+        else:
+            parts.append(f"{ub['base_full_path']}: [no candidates]")
+    entity_fqn = entity.get("full_path", "")
+    hint = f"\nHint: use 'deputy resolve <module>.<name>' to trace imports, then 'deputy pin-inheritance {entity_fqn} <name> <file>:<line>' to pin"
+    return "; ".join(parts) + hint
+
+
+def _print_unresolved_hint(entity: dict) -> None:
+    info = entity.get("_inheritance_info")
+    if not info:
+        return
+    unresolved = info.get("unresolved_bases", [])
+    if not unresolved:
+        return
+    base_labels = []
+    for ub in unresolved:
+        candidates = ub.get("candidates", [])
+        if candidates:
+            scope = candidates[0].get("scope", "")
+            label = ub["base_full_path"]
+            if "conditional" in scope:
+                label += " (conditional)"
+            base_labels.append(label)
+        else:
+            base_labels.append(f"{ub['base_full_path']} [no candidates]")
+    entity_fqn = entity.get("full_path", "")
+    console.print(f"\n[bold]Found unresolved bases:[/bold] {', '.join(base_labels)}")
+    console.print(f"[dim]Hint: use 'deputy resolve <module>.<name>' to trace imports, then 'deputy pin-inheritance {entity_fqn} <name> <file>:<line>' to pin[/dim]")
+
+
+def _format_mro(entity: dict) -> str:
+    info = entity.get("_inheritance_info")
+    if not info:
+        return ""
+    mro = info.get("mro")
+    if mro is None:
+        return "[incomplete - unresolved bases]"
+    return " → ".join(mro)
 
 def _display_info_single(entity: dict, columns: list[str], extract: bool) -> None:
     meta = json.loads(entity["metadata_json"])
@@ -171,6 +279,10 @@ def _display_info_single(entity: dict, columns: list[str], extract: bool) -> Non
         val = _get_column_value(entity, col, meta, extracted)
         table.add_row(f"{col}:", val)
     console.print(table)
+    if entity.get("type") == "CLASS" and "unresolved_bases" not in columns:
+        info = entity.get("_inheritance_info")
+        if info and info.get("unresolved_bases"):
+            _print_unresolved_hint(entity)
 
 def _display_info_table(entities: list[dict], columns: list[str]) -> None:
     meta_list = [json.loads(e["metadata_json"]) for e in entities]
@@ -236,6 +348,7 @@ def get_info(
         console.print(f"\n[dark_orange]Found {match_count} matching entities. Use --all to see all, or filter with --type / --lineno. See --help for details.[/dark_orange]")
 
 # TODO: Allow user to go back a step, and also go forward to the next step if they had gone back a path
+# TODO: Try handling module members of imported modules (eg: import a.b.c; class X(a.b.c.Base): pass) - this is tricky because we need to resolve the import chain and then find the base class in the imported module
 @app.command(name="resolve")
 def resolve(
     symbol: str = typer.Argument(..., help="Symbol to resolve, in the form <module_fqn>.<symbol_name>"),
@@ -273,6 +386,210 @@ def resolve(
         if result is None:
             raise typer.Exit(code=1)
 
+    conn.close()
+
+@app.command()
+def subclasses(
+    full_path: str = typer.Argument(..., help="Base class FQN to find subclasses of"),
+    transitive: bool = typer.Option(False, "--transitive", "-t", help="Include indirect subclasses"),
+) -> None:
+    try:
+        conn = _open_database()
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
+
+    branch = get_current_branch()
+
+    if transitive:
+        subs = get_transitive_subclasses(conn, full_path, branch_name=branch)
+    else:
+        subs = get_direct_subclasses(conn, full_path, branch_name=branch)
+
+    conn.close()
+
+    if not subs:
+        console.print(f"[yellow]No subclasses found for[/yellow] {full_path}")
+        raise typer.Exit()
+
+    tree = Tree(f"Subclasses of [bold]{full_path}[/bold]")
+    for sub in subs:
+        meta = {}
+        try:
+            meta = json.loads(sub["metadata_json"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+        lineno = meta.get("lineno", "")
+        loc = f" : {lineno}" if lineno else ""
+        tree.add(f"{sub['type']} {sub['full_path']}{loc}")
+    console.print(tree)
+
+@app.command(name="pin-inheritance")
+def pin_inheritance(
+    class_fqn: str = typer.Argument(None, help="Class FQN to pin a base for"),
+    base_name: str = typer.Argument(None, help="Base class name to resolve"),
+    entity_ref: str = typer.Argument(None, help="file_path:lineno[:col_offset] of the candidate to pin"),
+    remove: bool = typer.Option(False, "--remove", "-r", help="Remove an existing pin"),
+    list_pins: bool = typer.Option(False, "--list", "-l", help="List all pins for current branch"),
+) -> None:
+    try:
+        conn = _open_database()
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
+
+    branch = get_current_branch()
+
+    if list_pins:
+        pins = list_inheritance_pins(conn, branch)
+        conn.close()
+        if not pins:
+            console.print("[yellow]No inheritance pins set[/yellow]")
+            return
+        table = Table("Class", "Base Name", "Pinned Entity ID")
+        for pin in pins:
+            table.add_row(pin.get("class_fqn", pin["class_full_path"]), pin["base_name"], pin["pinned_entity_id"])
+        console.print(table)
+        return
+
+    if not class_fqn or not base_name:
+        console.print("[red]Usage: deputy pin-inheritance <class_fqn> <base_name> <file_path:lineno>[/red]")
+        console.print("       deputy pin-inheritance --list")
+        console.print("       deputy pin-inheritance --remove <class_fqn> <base_name>")
+        raise typer.Exit(code=1)
+
+    if remove:
+        ids = get_entity_ids_by_fqn(conn, class_fqn)
+        if not ids:
+            conn.close()
+            console.print(f"[red]Class not found:[/red] {class_fqn}")
+            raise typer.Exit(code=1)
+        for eid in ids:
+            entity = get_entity_by_id(conn, eid)
+            if entity and entity["type"] == "CLASS":
+                pin = get_inheritance_pin(conn, eid, base_name, branch)
+                if pin:
+                    pinned_entity = get_entity_by_id(conn, pin["pinned_entity_id"])
+                    if pinned_entity:
+                        conn.execute(
+                            "DELETE FROM class_bases WHERE class_entity_id = ? AND base_full_path = ?",
+                            (eid, pinned_entity["full_path"]),
+                        )
+                        upsert_class_bases(conn, eid, [{
+                            "base_full_path": base_name,
+                            "base_entity_id": None,
+                            "is_resolved": False,
+                        }])
+                delete_inheritance_pin(conn, eid, base_name, branch)
+                console.print(f"[green]Removed pin for[/green] {class_fqn}:{base_name}")
+                break
+        else:
+            console.print(f"[red]Class not found:[/red] {class_fqn}")
+            raise typer.Exit(code=1)
+        eager_resolve_all_inherited_members(conn, records=None, branch=branch)
+        conn.commit()
+        console.print(f"[dim]Inherited member aliases re-resolved after pin removal[/dim]")
+        conn.close()
+        return
+
+    if not entity_ref:
+        console.print("[red]Missing entity reference (file_path:lineno)[/red]")
+        raise typer.Exit(code=1)
+
+    ids = get_entity_ids_by_fqn(conn, class_fqn)
+    class_entity_id = None
+    for eid in ids:
+        entity = get_entity_by_id(conn, eid)
+        if entity and entity["type"] == "CLASS":
+            class_entity_id = eid
+            break
+
+    if not class_entity_id:
+        conn.close()
+        console.print(f"[red]Class not found:[/red] {class_fqn}")
+        raise typer.Exit(code=1)
+
+    parts = entity_ref.rsplit(":", 2)
+    lineno = int(parts[1]) if len(parts) > 1 else None
+    col_offset = int(parts[2]) if len(parts) > 2 else None
+
+    if lineno is None:
+        conn.close()
+        console.print("[red]Entity reference must be in the form file_path:lineno[:col_offset][/red]")
+        raise typer.Exit(code=1)
+
+    module_fqn = get_containing_module_fqn(conn, class_entity_id)
+    if not module_fqn:
+        conn.close()
+        console.print(f"[red]Cannot determine module for class {class_fqn}[/red]")
+        raise typer.Exit(code=1)
+
+    module_entities = get_entity_ids_by_fqn(conn, module_fqn)
+    module_entity_id = next(iter(module_entities)) if module_entities else None
+
+    if not module_entity_id:
+        conn.close()
+        console.print(f"[red]Module not found: {module_fqn}[/red]")
+        raise typer.Exit(code=1)
+
+    rows = conn.execute(
+        """SELECT id FROM entities
+           WHERE type = 'IMPORT_ALIAS'
+           AND full_path = ?
+           AND json_extract(metadata_json, '$.lineno') = ?""",
+        (f"{module_fqn}.{base_name}", lineno),
+    ).fetchall()
+    candidates = [dict(r) for r in rows]
+
+    if col_offset is not None:
+        candidates = [c for c in candidates
+                      if json.loads(get_entity_by_id(conn, c["id"])["metadata_json"]).get("col_offset") == col_offset]
+
+    if not candidates:
+        conn.close()
+        console.print(f"[red]No entity found at {entity_ref} in module {module_fqn}[/red]")
+        raise typer.Exit(code=1)
+
+    if len(candidates) > 1:
+        conn.close()
+        console.print(f"[red]Multiple entities found at {entity_ref}. Provide col_offset to disambiguate.[/red]")
+        raise typer.Exit(code=1)
+
+    import_alias_entity = get_entity_by_id(conn, candidates[0]["id"])
+    alias_meta = json.loads(import_alias_entity["metadata_json"])
+    import_stmt = get_entity_by_id(conn, import_alias_entity["parent_id"])
+    if import_stmt:
+        import_path = import_stmt.get("name", "")
+        original_name = alias_meta.get("original_name", "")
+        target_fqn = f"{import_path}.{original_name}"
+        target_ids = get_entity_ids_by_fqn(conn, target_fqn)
+        target_entity = None
+        for tid in target_ids:
+            te = get_entity_by_id(conn, tid)
+            if te and te["type"] == "CLASS":
+                target_entity = te
+                break
+        if target_entity:
+            pinned_entity_id = target_entity["id"]
+        else:
+            pinned_entity_id = import_alias_entity["id"]
+    else:
+        pinned_entity_id = import_alias_entity["id"]
+    upsert_inheritance_pin(conn, class_entity_id, base_name, pinned_entity_id, branch)
+    conn.execute(
+        "DELETE FROM class_bases WHERE class_entity_id = ? AND base_full_path = ?",
+        (class_entity_id, base_name),
+    )
+    pinned_fqn = target_entity["full_path"] if target_entity else base_name
+    upsert_class_bases(conn, class_entity_id, [{
+        "base_full_path": pinned_fqn,
+        "base_entity_id": pinned_entity_id,
+        "is_resolved": True,
+    }])
+    eager_resolve_all_inherited_members(conn, records=None, branch=branch)
+    conn.commit()
+    console.print(f"[green]Pinned[/green] {class_fqn}:{base_name} → {entity_ref}")
+    console.print(f"[dim]Inherited member aliases re-resolved after pin[/dim]")
     conn.close()
 
 @app.command()
