@@ -28,6 +28,7 @@ deputy resolve deputy.utils.storage.FileMetadata
 
 - [Installation](getting-started/installation.md) - setup options and prerequisites
 - [Quick Start](getting-started/quickstart.md) - basic workflow walkthrough
+- [Agent Skills](getting-started/agent-skills.md) - AI agent integration
 - [Commands](commands/overview.md) - full command reference
 - [Inheritance Guide](guides/inheritance.md) - understanding class hierarchy resolution
 - [Database Schema](reference/database.md) - tables and entity metadata
