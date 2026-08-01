@@ -348,6 +348,7 @@ def get_info(
         console.print(f"\n[dark_orange]Found {match_count} matching entities. Use --all to see all, or filter with --type / --lineno. See --help for details.[/dark_orange]")
 
 # TODO: Allow user to go back a step, and also go forward to the next step if they had gone back a path
+# TODO: Try handling module members of imported modules (eg: import a.b.c; class X(a.b.c.Base): pass) - this is tricky because we need to resolve the import chain and then find the base class in the imported module
 @app.command(name="resolve")
 def resolve(
     symbol: str = typer.Argument(..., help="Symbol to resolve, in the form <module_fqn>.<symbol_name>"),
