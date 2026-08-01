@@ -19,7 +19,10 @@ dependencies = [
 deputy = "deputy:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    "zensical>=0.0.52",
+]
 
 [build-system]
 requires = ["hatchling"]
