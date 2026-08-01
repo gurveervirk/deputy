@@ -2,6 +2,8 @@
 
 Code intelligence CLI for Python. Parses source files with [deproc](https://github.com/gurveervirk/deproc), stores entities (classes, functions, imports, etc.) in a local SQLite database, and provides commands to search, inspect, and resolve symbols.
 
+**[Full documentation →](https://gurveervirk.github.io/deputy/)**
+
 ## Installation
 
 ```bash
@@ -9,198 +11,37 @@ pip install deputy
 # or: uv tool install deputy
 ```
 
-## Quick Start
+## Quick start
 
 ```bash
-deputy init                # create database
-deputy sync                # scan & index project
-deputy sync --sync-deps    # also index dependencies from .venv
-deputy search "Model"      # find entities matching regex
-deputy info deputy.core.create_context     # inspect an entity
-deputy info --resolve deputy.utils.storage.FileMetadata  # resolve through imports
+deputy init                                    # create database
+deputy sync                                    # scan & index project
+deputy search "Model"                          # find entities matching regex
+deputy info deputy.core.create_context          # inspect an entity
+deputy resolve deputy.utils.storage.FileMetadata  # resolve through imports
+deputy subclasses myapp.models.BaseModel       # find direct subclasses
+deputy pin-inheritance myapp.models.Model Base models.py:10  # pin ambiguous base
 ```
 
 ## Configuration
 
 Deputy uses a key-value config file (`.deputyconfig`) in the project root:
 
-```
-db_path=/absolute/path/to/custom.db
-venv_path=/path/to/venv
-sync_deps=true
-max_dep_files=5000
-enable_cache=true
-auto_sync=true
-log_level=WARNING
-log_file=/path/to/deputy.log
-display_mode=table
-```
-
-Settings are managed with `deputy config <key> <value>`.
-
-Caching is **opt-in**. Symbol resolution results (`deputy info --resolve`) are cached in the database to speed up repeated lookups. Enable with:
-
 ```bash
-deputy config enable_cache true
-```
-
-Auto-sync is **opt-in**. When enabled, `deputy search` and `deputy info` check if source files have changed since the last sync and run a sync automatically before querying. Enable with:
-
-```bash
-deputy config auto_sync true
-```
-
-Display mode for search results is configured via `.deputyconfig`:
-
-```bash
-deputy config display_mode tree      # tree grouped by hierarchy
-deputy config display_mode table     # tabular (default)
+deputy config enable_cache true       # cache resolution results
+deputy config auto_sync true          # auto-sync before queries
+deputy config display_mode tree       # tree view for search results
+deputy config sync_deps true          # index .venv dependencies
 ```
 
 ## Logging
 
-Deputy writes structured logs to a file at `.deputy/deputy.log` (project-local). Levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`. Configure via `.deputyconfig`:
-
 ```bash
-deputy config log_level DEBUG      # most verbose
-deputy config log_level WARNING    # default
-deputy config log_level ERROR      # errors only
+deputy config log_level DEBUG         # most verbose
+deputy config log_level WARNING       # default
+deputy -v sync                        # one-off debug mode
+deputy --quiet search "Model"         # errors only
 ```
-
-Override the log file path:
-
-```bash
-deputy config log_file /custom/path/deputy.log
-```
-
-Also respects the `DEPUTY_LOG_LEVEL` environment variable.
-
-### CLI flags
-
-All commands accept `--verbose` / `-v` (sets log level to `DEBUG`) and `--quiet` / `-q` (sets log level to `ERROR`):
-
-```bash
-deputy -v sync
-deputy --quiet search "Model"
-```
-
-## Commands
-
-### `deputy init [--path <db>]`
-
-Creates a SQLite database at the given path (default `.deputy.db`). Records the current directory as the project root. Auto-detects the active virtual environment and writes `venv_path` to `.deputyconfig`.
-
-### `deputy sync [--force] [--sync-deps] [--no-sync-deps]`
-
-Scans all `.py` / `.pyi` files under the project root, parses them with deproc, and persists all discovered entities to the database. Incremental by default: only re-parses files whose content hash changed. `--force` reprocesses everything.
-
-`--sync-deps` also indexes dependency packages from the project's `.venv`. Each package's top-level modules are parsed and linked into the database as separate entities (tagged with `source: "dependency"`). Editable (path-based) dependencies are followed to their source directories automatically.
-
-`--no-sync-deps` skips dependency indexing even if `sync_deps=true` in config.
-
-The following directories and patterns are excluded from discovery and linking:
-
-- `__pycache__/` (hardcoded)
-- `*.egg-info`, `*.dist-info`
-- `node_modules/`
-- `.git/`, `.venv/`, `.mypy_cache/`, `.pytest_cache/`
-- `build/`, `dist/`
-
-### `deputy search [options] <regex>`
-
-Queries the database for entities whose `full_path` or `name` matches the regex pattern. Supports display filters and output modes.
-
-**Filter options:**
-
-| Flag | Description |
-|------|-------------|
-| `--type` / `-t TEXT` | Filter by entity type (repeatable: `FUNCTION`, `CLASS`, `MODULE`, `PACKAGE`, `CONSTANT`, `TYPE_ALIAS`, `IMPORT_ALIAS`) |
-| `--language` / `-l TEXT` | Filter by language (e.g. `python`) |
-| `--limit INT` | Max results |
-| `--offset INT` | Result offset |
-| `--exact` / `-e` | Exact match on `full_path` (no regex) |
-| `--name-only` / `-n` | Match name only, not `full_path` |
-
-**Display modes:**
-
-Controlled by `display_mode` config key in `.deputyconfig`:
-- `table` (default) — `rich.table.Table` with columns Name, Type, Language, Full Path
-- `tree` — `rich.tree.Tree` grouped by package→module→entity hierarchy
-
-In tree mode, the `--fqn` / `-f` flag appends the full path to each entry:
-
-```bash
-deputy search "detect_venv" --fqn
-# Entities
-# └── src
-#     └── deputy
-#         └── venv
-#             └── detect
-#                 └── FUNCTION detect_venv src.deputy.venv.detect.detect_venv
-```
-
-The hierarchy is derived from dot-separated `full_path` values, not from entity types — so filters like `--type` preserve the tree structure.
-
-### `deputy info <full-path> [--resolve] [--all]`
-
-Looks up an entity by its exact `full_path`. Without flags, shows a single entity with its metadata JSON.
-
-`--resolve` follows import aliases and re-exports to find the original definition. For example, if `deputy.utils.storage.FileMetadata` is a re-export from `deputy.utils.storage.models`, `--resolve` traces through the import chain and shows the actual class definition.
-
-`--all` returns every entity matching that `full_path` (e.g., the same class name defined in multiple modules).
-
-### `deputy config <key> [value]`
-
-Read or write a config key. With a value, persists it to `.deputyconfig`. Without, prints the current value.
-
-## Database
-
-Default location is `.deputy.db` in the project root. A custom location is persisted in `.deputyconfig`.
-
-### Schema
-
-| Table | Purpose |
-|---|---|
-| `entities` | Parsed symbols — id, language, full_path, name, type, metadata_json |
-| `branch_entities` | Branch-to-entity mapping for cross-branch entity sharing |
-| `branch_files` | Per-branch file tracking — content hash and mtime for incremental sync |
-| `cache_entries` | Resolved symbol cache per (module_fqn, symbol_name) |
-| `cache_module_links` | Cross-module cache linkage for invalidation |
-| `dependencies` | Indexed dependency packages — name, version, install_path, source |
-| `config` | Key-value store (base_path, CLI version, sync_deps) |
-
-### Entity Metadata
-
-Each entity stores a `metadata_json` blob with type-specific fields:
-
-| Field | Applies To | Description |
-|---|---|---|
-| `lineno`, `end_lineno`, `col_offset`, `end_col_offset` | All entities | Source location |
-| `fqn` | All entities | Fully qualified name |
-| `path` | Modules, packages | Relative file path |
-| `visibility` | Functions, methods, classes | `public` / `private` |
-| `all_exports` | Modules | Contents of `__all__` |
-| `exported` | All entities | Whether re-exported via `__all__` |
-| `original_name` | Import aliases | Name before aliasing |
-| `alias` | Import aliases | The alias (if any) |
-| `import_type`, `wildcard` | Import statements | Import kind |
-| `source` | Dependency entities | `"dependency"` (absent for project entities) |
-| `package_name` | Dependency entities | Originating package name |
-
-## Architecture
-
-```
-deputy CLI (typer)
-  └─ tools/core.py
-       ├─ init → open_database + init_schema + detect_venv
-       ├─ sync → get_source_files → deproc parse/link → upsert_entities
-       │   └─ --sync-deps → detect_venv → list_installed_packages → process_dependency
-       ├─ search → SQLite REGEXP query on entities
-       ├─ info → get_entity_by_path / get_entities_by_path
-       └─ config → read/write .deputyconfig
-```
-
-Dependencies: `deproc-core`, `deproc-python`, `typer`, `rich`.
 
 ## Development
 
@@ -210,3 +51,7 @@ cd deputy
 uv sync
 uv run pytest
 ```
+
+## License
+
+See [LICENSE](LICENSE).

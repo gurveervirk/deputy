@@ -1,0 +1,67 @@
+site_name: deputy
+site_description: Code intelligence CLI for Python
+site_url: https://gurveervirk.github.io/deputy/
+repo_url: https://github.com/gurveervirk/deputy
+repo_name: gurveervirk/deputy
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.indexes
+    - navigation.sections
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+  - Commands:
+      - Commands Overview: commands/overview.md
+      - init: commands/init.md
+      - sync: commands/sync.md
+      - search: commands/search.md
+      - info: commands/info.md
+      - resolve: commands/resolve.md
+      - subclasses: commands/subclasses.md
+      - pin-inheritance: commands/pin-inheritance.md
+      - config: commands/config.md
+  - Reference:
+      - Database Schema: reference/database.md
+      - Configuration: reference/config.md
+      - Entity Metadata: reference/entity-metadata.md
+      - Architecture: reference/architecture.md
+  - Guides:
+      - Inheritance: guides/inheritance.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
