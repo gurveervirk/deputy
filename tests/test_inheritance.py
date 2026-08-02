@@ -12,9 +12,9 @@ from deputy.tools.inheritance import (
     _create_inherited_inner_class_aliases,
     eager_resolve_all_inherited_members,
     compute_class_mro,
-    c3_merge,
     resolve_entity_through_mro,
 )
+from deproc.plugins.python.inheritance import c3_merge
 from deputy.tools.core import _compute_source
 
 def _upsert_class(conn, eid, fqn, name, method_ids=None, inner_type_ids=None, property_ids=None, lineno=1, parent_classes=None):
