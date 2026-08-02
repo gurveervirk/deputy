@@ -20,7 +20,7 @@ deputy CLI (typer)
        └─ config → read/write .deputyconfig
 
   tools/inheritance.py
-       ├─ compute_class_mro → C3 linearization
+       ├─ compute_class_mro → delegates to deproc C3 linearisation
        ├─ get_inherited_members → collect from MRO chain
        ├─ eager_resolve_all_inherited_members → create INHERITED_MEMBER entities
        └─ resolve_entity_through_mro → resolve dotted paths via MRO
@@ -47,12 +47,11 @@ SQLite database (.deputy.db)
 
 | Package | Role |
 |---------|------|
-| `deproc-core` | Parser core - AST models, linker |
-| `deproc-python` | Python language parser |
+| `deproc-core` | Plugin core — AST models, linker, resolver, entity registry interfaces |
+| `deproc-python` | Python language parser — tree-sitter based, also provides C3 MRO utilities |
 | `deproc-utils-tree-sitter` | Tree-sitter utilities for parsing |
 | `typer` | CLI framework |
 | `rich` | Terminal output (tables, trees, panels) |
-| `typer` | CLI framework |
 
 ## Branch awareness
 
