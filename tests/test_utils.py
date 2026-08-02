@@ -17,45 +17,8 @@ from deproc.plugins.python.parser.models import (
     PythonImportAlias,
     PythonTypeAlias,
 )
-from deputy.tools.utils import _entity_fqn, _entity_record, _build_module_exports
+from deputy.tools.utils import _entity_record
 from unittest.mock import MagicMock
-
-class TestEntityFqn:
-    def test_direct_fqn(self):
-        entity = MagicMock(spec=["fqn"])
-        entity.fqn = "pkg.mod.func"
-        assert _entity_fqn(entity) == "pkg.mod.func"
-
-    def test_variable_binding_fqn(self):
-        entity = MagicMock()
-        entity.fqn = None
-        entity.variable_binding = MagicMock(fqn="pkg.mod.var")
-        assert _entity_fqn(entity) == "pkg.mod.var"
-
-    def test_no_fqn(self):
-        entity = MagicMock(spec=[])
-        assert _entity_fqn(entity) is None
-
-class TestBuildModuleExports:
-    def test_with_all_exports(self):
-        m1 = MagicMock(spec=PythonModule)
-        m1.fqn = "pkg.mod"
-        m1.all_exports = ["func", "ClassA"]
-        result = _build_module_exports(MagicMock(values=lambda: [m1]))
-        assert result == {"pkg.mod": {"func", "ClassA"}}
-
-    def test_without_all_exports(self):
-        m1 = MagicMock(spec=PythonModule)
-        m1.fqn = "pkg.mod"
-        m1.all_exports = None
-        result = _build_module_exports(MagicMock(values=lambda: [m1]))
-        assert result == {}
-
-    def test_ignores_non_module(self):
-        func = MagicMock()
-        func.fqn = "pkg.mod.func"
-        result = _build_module_exports(MagicMock(values=lambda: [func]))
-        assert result == {}
 
 class TestEntityRecord:
     def _registry(self, values):

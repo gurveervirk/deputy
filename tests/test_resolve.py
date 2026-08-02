@@ -3,7 +3,7 @@ import pytest
 import io
 from unittest.mock import patch
 from rich.console import Console
-from deputy.database.sqlite import upsert_entity, upsert_branch_entities, get_entity_by_id
+from deputy.database.sqlite import upsert_entity, upsert_branch_entities
 from deputy.tools.resolve import InteractiveResolver, ResolveStep
 
 @pytest.fixture

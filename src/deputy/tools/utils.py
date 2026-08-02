@@ -2,7 +2,7 @@ import os
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from deproc.plugins.python.linker.models import PythonModule
+from deproc.plugins.python.utils.exports import build_module_exports
 from deputy.database.sqlite import (
     open_database,
     get_branch_files,
@@ -14,7 +14,6 @@ from deputy.logger import get_logger
 from deputy.utils.config_file import read_config
 from deputy.utils.storage import compute_sha256, get_source_files
 from deputy.core import create_context
-from collections import defaultdict
 from rich.tree import Tree
 
 logger = get_logger("tools.utils")
@@ -125,14 +124,6 @@ def _detect_file_changes(
         logger.debug("files deleted: %s", ", ".join(sorted(deleted)))
     return file_hashes, changed, mtime_only, deleted
 
-def _build_module_exports(registry) -> dict[str, set[str]]:
-    exports: dict[str, set[str]] = defaultdict(set)
-    for entity in registry.values():
-        if isinstance(entity, PythonModule) and hasattr(entity, "all_exports") and entity.all_exports:
-            for name in entity.all_exports:
-                exports[entity.fqn].add(name)
-    return dict(exports)
-
 def _process_files(
     ctx,
     files: list,
@@ -154,7 +145,7 @@ def _process_files(
     logger.debug("linking %d source files", len(source_files))
     linker.link_files(source_files, ctx)
 
-    module_exports = _build_module_exports(ctx.entity_registry)
+    module_exports = build_module_exports(ctx.entity_registry)
 
     records = []
     kwargs_base = entity_record_kwargs or {}
@@ -170,17 +161,7 @@ def _process_files(
     logger.debug("processed %d records from %d files", len(records), len(files))
     return records, relpath_to_fqn
 
-def _entity_fqn(entity) -> str | None:
-    fqn = getattr(entity, "fqn", None)
-    if fqn:
-        return fqn
-    vb = getattr(entity, "variable_binding", None)
-    if vb:
-        return getattr(vb, "fqn", None)
-    return None
-
 def _is_stale(conn, branch, base_path):
-
     ctx = create_context(base_path, conn)
     files = get_source_files(ctx)
     tracked = get_branch_files(conn, branch)

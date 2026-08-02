@@ -2,8 +2,6 @@ import json
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
-
-import pytest
 from deproc.core.interfaces.parser.models import FunctionLike
 from deputy.database.sqlite import (
     delete_entities_by_package,
