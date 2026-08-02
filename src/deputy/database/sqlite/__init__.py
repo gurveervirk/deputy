@@ -37,7 +37,6 @@ from .main import (
     delete_inheritance_pin,
     list_inheritance_pins,
 )
-from .serialization import entity_to_record, record_to_entity
 from .symbol_cache import SqliteSymbolCache
 
 __all__ = [
@@ -78,7 +77,5 @@ __all__ = [
     "get_inheritance_pin",
     "delete_inheritance_pin",
     "list_inheritance_pins",
-    "entity_to_record",
-    "record_to_entity",
     "SqliteSymbolCache",
 ]
