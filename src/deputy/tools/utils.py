@@ -3,13 +3,14 @@ import json
 import sqlite3
 from dataclasses import dataclass, field
 from deproc.plugins.python.utils.exports import build_module_exports
+from deproc.plugins.python.utils.imports import resolve_relative_import_path
 from deputy.database.sqlite import (
     open_database,
     get_branch_files,
     get_entity_ids_by_fqn,
     get_entity_by_id,
 )
-from deputy.database.sqlite.serialization import entity_to_record
+from deproc.plugins.python.utils.serialization import entity_to_record
 from deputy.logger import get_logger
 from deputy.utils.config_file import read_config
 from deputy.utils.storage import compute_sha256, get_source_files
@@ -52,15 +53,7 @@ def resolve_relative_import(conn: sqlite3.Connection, import_stmt: dict, path: s
     if not module_fqn:
         return None
     is_package = module_is_package(conn, module_fqn)
-    relative_parts = path.split(".")
-    parent_parts = module_fqn.split(".")
-    num_leading_dots = len(path) - len(path.lstrip("."))
-    levels_to_pop = num_leading_dots - (1 if is_package else 0)
-    for _ in range(levels_to_pop):
-        if parent_parts:
-            parent_parts.pop()
-    relative_parts = [p for p in relative_parts if p]
-    return ".".join(parent_parts + relative_parts)
+    return resolve_relative_import_path(path, module_fqn, is_package)
 
 def resolve_import_alias(conn: sqlite3.Connection, alias: dict) -> tuple[str | None, str | None]:
     meta = json.loads(alias["metadata_json"])
