@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from deproc.plugins.python.inheritance import c3_merge, compute_mro_from_bases
+from deproc.plugins.python.utils.mro import compute_mro_from_bases
 from deputy.database.sqlite import (
     get_entity_ids_by_fqn,
     get_entity_by_id,
