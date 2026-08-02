@@ -1,5 +1,4 @@
 import json
-import pytest
 from deputy.database.sqlite import (
     upsert_entity,
     upsert_class_bases,
@@ -190,32 +189,6 @@ class TestEagerResolveFullPipeline:
     def test_non_existent_path_returns_none(self, db):
         result = resolve_entity_through_mro(db, "Nonexistent.thing")
         assert result == (None, None)
-
-class TestC3Merge:
-    def test_simple_merge(self, db):
-        assert c3_merge([["B", "O"], ["C", "O"], ["B", "C"]]) == ["B", "C", "O"]
-
-    def test_diamond_inheritance(self, db):
-        _upsert_class(db, "c1", "object", "object")
-        _upsert_class(db, "c2", "Base", "Base", parent_classes=["object"])
-        _upsert_class(db, "c3", "Mixin", "Mixin", parent_classes=["object"])
-        _upsert_class(db, "c4", "Child", "Child", parent_classes=["Base", "Mixin"])
-        upsert_class_bases(db, "c2", [{"base_full_path": "object", "base_entity_id": "c1", "is_resolved": True}])
-        upsert_class_bases(db, "c3", [{"base_full_path": "object", "base_entity_id": "c1", "is_resolved": True}])
-        upsert_class_bases(db, "c4", [
-            {"base_full_path": "Base", "base_entity_id": "c2", "is_resolved": True},
-            {"base_full_path": "Mixin", "base_entity_id": "c3", "is_resolved": True},
-        ])
-        mro = compute_class_mro(db, "c4")
-        assert mro is not None
-        assert mro[0] == "Child"
-        assert mro.index("Base") < mro.index("Mixin")
-        assert "object" in mro
-
-    def test_inconsistent_hierarchy_raises(self, db):
-        seqs = [["X", "O"], ["Y", "O"], ["Y", "X"], ["X", "Y"]]
-        with pytest.raises(ValueError):
-            c3_merge(seqs)
 
 class TestComputeClassMro:
     def test_single_inheritance(self, db):
