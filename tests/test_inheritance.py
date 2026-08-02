@@ -13,7 +13,6 @@ from deputy.tools.inheritance import (
     compute_class_mro,
     resolve_entity_through_mro,
 )
-from deproc.plugins.python.inheritance import c3_merge
 from deputy.tools.core import _compute_source
 
 def _upsert_class(conn, eid, fqn, name, method_ids=None, inner_type_ids=None, property_ids=None, lineno=1, parent_classes=None):
