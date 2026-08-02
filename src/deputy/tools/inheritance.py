@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from deproc.plugins.python.inheritance import c3_merge, compute_mro_from_bases
 from deputy.database.sqlite import (
     get_entity_ids_by_fqn,
     get_entity_by_id,
@@ -304,7 +305,7 @@ def _create_inherited_base_aliases(
                     continue
                 seen_member_names.add(member_name)
                 syn = _create_synthetic_entity(
-                    class_fqn, member, source_fqn, mro_idx, class_entity_id, record, conn, branch
+                    class_fqn, member, source_fqn, mro_idx, class_entity_id, conn
                 )
                 if syn:
                     created.append(syn)
@@ -318,7 +319,7 @@ def _create_inherited_base_aliases(
                     continue
                 seen_member_names.add(member_name)
                 syn = _create_synthetic_entity(
-                    class_fqn, member, source_fqn, mro_idx, class_entity_id, record, conn, branch
+                    class_fqn, member, source_fqn, mro_idx, class_entity_id, conn
                 )
                 if syn:
                     created.append(syn)
@@ -332,7 +333,7 @@ def _create_inherited_base_aliases(
                     continue
                 seen_member_names.add(member_name)
                 syn = _create_synthetic_entity(
-                    class_fqn, inner, source_fqn, mro_idx, class_entity_id, record, conn, branch
+                    class_fqn, inner, source_fqn, mro_idx, class_entity_id, conn
                 )
                 if syn:
                     created.append(syn)
@@ -345,9 +346,7 @@ def _create_synthetic_entity(
     inherited_from: str,
     mro_depth: int,
     class_entity_id: str,
-    class_record: dict,
     conn: sqlite3.Connection,
-    branch: str,
 ) -> dict | None:
     """Create an INHERITED_MEMBER synthetic entity pointing to a target member from a base class."""
     own_name = target.get("name", "")
@@ -459,9 +458,7 @@ def _create_inherited_inner_class_aliases(
                         inner_class_fqn,
                         mro_idx + 1,
                         class_entity_id,
-                        record,
                         conn,
-                        branch,
                     )
                     if syn:
                         created.append(syn)
@@ -497,27 +494,6 @@ def eager_resolve_all_inherited_members(
         from deputy.database.sqlite import upsert_branch_entities
         upsert_branch_entities(conn, branch, all_ids)
         conn.commit()
-
-def c3_merge(seqs: list[list[str]]) -> list[str]:
-    """Standard C3 linearization merge.
-
-    Raises ValueError on inconsistent hierarchy.
-    """
-    result = []
-    while True:
-        nonempty = [s for s in seqs if s]
-        if not nonempty:
-            return result
-        for seq in nonempty:
-            candidate = seq[0]
-            if not any(candidate in s[1:] for s in nonempty):
-                result.append(candidate)
-                for s in nonempty:
-                    if s and s[0] == candidate:
-                        s.pop(0)
-                break
-        else:
-            raise ValueError(f"Inconsistent MRO hierarchy: cannot merge {seqs}")
 
 def compute_class_mro(
     conn: sqlite3.Connection,
@@ -592,16 +568,12 @@ def compute_class_mro(
         _visiting.discard(class_entity_id)
         return result
 
-    merge_lists = [list(m) for m in base_mros] + [[b["base_full_path"] for b in resolved_prefix]]
+    base_mro_dict = {b["base_full_path"]: base_mros[i] for i, b in enumerate(resolved_prefix)}
+    base_fqns = [b["base_full_path"] for b in resolved_prefix]
 
-    try:
-        class_fqn = entity["full_path"]
-        result = [class_fqn] + c3_merge(merge_lists)
-    except ValueError:
+    result = compute_mro_from_bases(entity["full_path"], base_mro_dict, base_fqns)
+    if result is None:
         logger.warning("inconsistent MRO for %s", entity["full_path"])
-        memo[class_entity_id] = None
-        _visiting.discard(class_entity_id)
-        return None
 
     memo[class_entity_id] = result
     _visiting.discard(class_entity_id)
@@ -632,7 +604,6 @@ def get_inherited_members(
     if mro is None or len(mro) < 2:
         return {}
 
-    self_fqn = mro[0]
     inherited: dict[str, list[dict]] = {}
 
     seen_names: set[str] = set()
