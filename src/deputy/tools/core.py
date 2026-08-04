@@ -43,12 +43,12 @@ from deputy.tools.inheritance import (
     resolve_entity_through_mro,
     eager_resolve_all_inherited_members,
 )
-from deputy.venv import (
+from deproc.utils.python_env import (
     detect_venv,
     find_site_packages, 
-    list_installed_packages,
-    process_dependency
+    list_installed_packages
 )
+from deputy.venv import process_dependency
 
 logger = get_logger("tools.core")
 console = Console()

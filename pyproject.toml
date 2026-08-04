@@ -12,6 +12,7 @@ dependencies = [
     "deproc-core>=0.1.0",
     "deproc-python>=0.1.0",
     "deproc-utils-tree-sitter>=0.1.0",
+    "deproc-utils-python-env>=0.1.0",
     "typer>=0.26.8",
     "rich>=13.0.0",
 ]
@@ -55,3 +56,4 @@ testpaths = ["tests"]
 deproc-core = { path = "../deproc/deproc-core", editable = true }
 deproc-python = { path = "../deproc/deproc-python", editable = true }
 deproc-utils-tree-sitter = { path = "../deproc/deproc-utils-tree-sitter", editable = true }
+deproc-utils-python-env = { path = "../deproc/deproc-utils-python-env", editable = true }

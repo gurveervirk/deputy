@@ -64,6 +64,11 @@ requires-dist = [
 ]
 
 [[package]]
+name = "deproc-utils-python-env"
+version = "0.1.0"
+source = { editable = "../deproc/deproc-utils-python-env" }
+
+[[package]]
 name = "deproc-utils-tree-sitter"
 version = "0.1.0"
 source = { editable = "../deproc/deproc-utils-tree-sitter" }
@@ -81,6 +86,7 @@ source = { editable = "." }
 dependencies = [
     { name = "deproc-core" },
     { name = "deproc-python" },
+    { name = "deproc-utils-python-env" },
     { name = "deproc-utils-tree-sitter" },
     { name = "rich" },
     { name = "typer" },
@@ -96,6 +102,7 @@ dev = [
 requires-dist = [
     { name = "deproc-core", editable = "../deproc/deproc-core" },
     { name = "deproc-python", editable = "../deproc/deproc-python" },
+    { name = "deproc-utils-python-env", editable = "../deproc/deproc-utils-python-env" },
     { name = "deproc-utils-tree-sitter", editable = "../deproc/deproc-utils-tree-sitter" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "typer", specifier = ">=0.26.8" },
