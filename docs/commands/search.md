@@ -41,13 +41,13 @@ deputy search "Model"
 
 ```bash
 deputy config display_mode tree
-deputy search "detect_venv"
+deputy search "search_entities"
 # Entities
 # └── src
 #     └── deputy
-#         └── venv
-#             └── detect
-#                 └── FUNCTION detect_venv src.deputy.venv.detect.detect_venv
+#         └── tools
+#             └── core
+#                 └── FUNCTION search_entities deputy.tools.core.search_entities
 ```
 
 The `--fqn` / `-f` flag appends the full path to each entry in tree mode.

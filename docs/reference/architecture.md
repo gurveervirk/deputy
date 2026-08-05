@@ -49,6 +49,7 @@ SQLite database (.deputy.db)
 |---------|------|
 | `deproc-core` | Plugin core — AST models, linker, resolver, entity registry, entity utilities (parent-chain walking, scope classification) |
 | `deproc-python` | Python language parser — tree-sitter based, C3 MRO utilities, module exports builder, entity serialization |
+| `deproc-utils-python-env` | Virtual environment detection and package discovery |
 | `deproc-utils-tree-sitter` | Tree-sitter utilities for parsing |
 | `typer` | CLI framework |
 | `rich` | Terminal output (tables, trees, panels) |
