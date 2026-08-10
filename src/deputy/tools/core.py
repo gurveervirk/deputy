@@ -229,7 +229,7 @@ def search_entities(
 
 def _compute_source(entity: dict, conn) -> str:
     meta = json.loads(entity["metadata_json"])
-    if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
+    if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE", "COMPILATION_UNIT"):
         return meta.get("path", "")
     if entity["type"] == "INHERITED_MEMBER":
         target_id = meta.get("target_entity_id")
@@ -253,7 +253,7 @@ def _compute_source(entity: dict, conn) -> str:
 
 def _get_source_file_path(entity: dict, conn, base_path: str) -> str | None:
     meta = json.loads(entity["metadata_json"])
-    if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
+    if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE", "COMPILATION_UNIT"):
         path = meta.get("path", "")
     else:
         sid = meta.get("source_id")
