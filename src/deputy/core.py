@@ -3,15 +3,27 @@ from deproc.plugins.python import (
     PythonSourceParser,
     PythonLinker,
 )
+from deproc.plugins.java import (
+    JavaSourceParser,
+    JavaLinker,
+)
 from .database.sqlite import (
     SqliteSymbolCache,
 )
 
 def create_context(base_path: str, conn, enable_cache: bool = False) -> Context:
     ctx = Context(base_path=base_path)
+
+    # Register python
     ctx.set_language("python", [".py", ".pyi"], aliases=["py"])
     ctx.set_parser("python", PythonSourceParser())
     ctx.set_linker("python", PythonLinker())
+
+    # Register java
+    ctx.set_language("java", [".java"])
+    ctx.set_parser("java", JavaSourceParser())
+    ctx.set_linker("java", JavaLinker())
+    
     ctx.set_skip_paths({
         "*.egg-info", "*.dist-info", "__pycache__", "node_modules", ".git",
         ".venv", ".mypy_cache", ".pytest_cache", "build", "dist",

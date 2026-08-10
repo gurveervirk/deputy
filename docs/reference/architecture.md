@@ -29,19 +29,27 @@ deputy CLI (typer)
 ## Data flow
 
 ```
-Source files (.py/.pyi)
+Source files (.py/.pyi, .java)
     │
     ▼
-deproc parser (linker + models)
+deproc parser (language-aware linker + models)
     │
     ▼
 SQLite database (.deputy.db)
-    │
     ├─ search → REGEXP queries on entities table
     ├─ info → entity lookup + class_bases + inheritance_pins
-    ├─ resolve → import alias chain tracing
+    ├─ resolve → import alias chain tracing (Python)
     └─ subclasses → class_bases + branch_entities
 ```
+
+## Multi-language support
+
+`create_context` registers both `python` (`.py`/`.pyi`) and `java` (`.java`). `_process_files` groups source files by extension and processes each language in an isolated `Context` (fresh `EntityRegistry`) so parsers/linkers/serializers never interfere:
+
+- Python: `PythonSourceParser`/`PythonLinker`, module exports, `deproc.plugins.python...entity_to_record`
+- Java: `JavaSourceParser`/`JavaLinker`, `deproc.plugins.java...entity_to_record`
+
+`search --language java` and the `info`/`search` Java columns (`annotations`, `superclass`, `implements`, `is_abstract`, `is_final`, `is_static`) surface Java entities. Java `IMPORT` entities are excluded from search results (mirroring Python's excluded `IMPORT_STATEMENT`). The inheritance pipeline (class_bases/MRO/inherited members) is Python-only for now — Java classes serialize `superclass`/`implements` and are skipped.
 
 ## Dependencies
 
@@ -49,6 +57,7 @@ SQLite database (.deputy.db)
 |---------|------|
 | `deproc-core` | Plugin core — AST models, linker, resolver, entity registry, entity utilities (parent-chain walking, scope classification) |
 | `deproc-python` | Python language parser — tree-sitter based, C3 MRO utilities, module exports builder, entity serialization |
+| `deproc-java` | Java language parser — tree-sitter based, package hierarchy, entity serialization |
 | `deproc-utils-python-env` | Virtual environment detection and package discovery |
 | `deproc-utils-tree-sitter` | Tree-sitter utilities for parsing |
 | `typer` | CLI framework |

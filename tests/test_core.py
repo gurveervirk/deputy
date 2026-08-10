@@ -25,3 +25,16 @@ def test_create_context_cache_enabled():
     cache = ctx.get_symbol_cache("python")
     assert cache is not None
     assert isinstance(cache, SqliteSymbolCache)
+
+def test_create_context_registers_java():
+    conn = MagicMock()
+    ctx = create_context("/base", conn)
+    assert ctx.has_parser("java")
+    assert ctx.has_linker("java")
+    assert ".java" in ctx.selected_file_extensions
+
+def test_create_context_registers_python():
+    conn = MagicMock()
+    ctx = create_context("/base", conn)
+    assert ctx.has_parser("python")
+    assert ctx.has_linker("python")

@@ -59,6 +59,12 @@ AVAILABLE_COLUMNS = {
     "inherited_from": "Class in the MRO that provides this member (if inherited)",
     "visibility": "Visibility modifier",
     "exported": "Whether exported in __all__",
+    "annotations": "Annotations (e.g. Java annotations)",
+    "superclass": "Java superclass",
+    "implements": "Java implemented interfaces",
+    "is_abstract": "Whether abstract (Java/Python)",
+    "is_final": "Whether final (Java)",
+    "is_static": "Whether static (Java/Python)",
 }
 
 DEFAULT_COLUMNS = ["full_path", "language", "type", "source"]
@@ -181,6 +187,18 @@ def _get_column_value(entity: dict, col: str, meta: dict, extracted: dict | None
         return meta.get("visibility", "")
     if col == "exported":
         return str(meta.get("exported", ""))
+    if col == "annotations":
+        return ", ".join(meta.get("annotations", []))
+    if col == "superclass":
+        return str(meta.get("superclass", ""))
+    if col == "implements":
+        return ", ".join(meta.get("implements", []))
+    if col == "is_abstract":
+        return str(meta.get("is_abstract", ""))
+    if col == "is_final":
+        return str(meta.get("is_final", ""))
+    if col == "is_static":
+        return str(meta.get("is_static", ""))
     if col == "resolved_bases":
         return _format_resolved_bases(entity)
     if col == "unresolved_bases":

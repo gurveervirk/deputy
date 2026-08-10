@@ -122,7 +122,7 @@ def search_entities(
         parts.append(f"({col}full_path REGEXP ? OR {col}name REGEXP ?)")
         params.extend([pattern, pattern])
 
-    parts.append(f"{col}type NOT IN ('IMPORT_STATEMENT', 'CONTROL_FLOW_BLOCK', 'CONTROL_FLOW_GROUP')")
+    parts.append(f"{col}type NOT IN ('IMPORT_STATEMENT', 'IMPORT', 'CONTROL_FLOW_BLOCK', 'CONTROL_FLOW_GROUP')")
 
     if type_filter:
         placeholders = ",".join("?" for _ in type_filter)
