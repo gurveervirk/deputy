@@ -2,6 +2,8 @@ import os
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from deproc.core.context import Context
+from deproc.core.runtime import EntityRegistry
 from deproc.plugins.python.utils.exports import build_module_exports
 from deproc.plugins.python.utils.imports import resolve_relative_import_path
 from deputy.database.sqlite import (
@@ -10,7 +12,6 @@ from deputy.database.sqlite import (
     get_entity_ids_by_fqn,
     get_entity_by_id,
 )
-from deproc.plugins.python.utils.serialization import entity_to_record
 from deputy.logger import get_logger
 from deputy.utils.config_file import read_config
 from deputy.utils.storage import compute_sha256, get_source_files
@@ -18,6 +19,19 @@ from deputy.core import create_context
 from rich.tree import Tree
 
 logger = get_logger("tools.utils")
+
+LANGUAGE_EXTENSIONS = {
+    "python": (".py", ".pyi"),
+    "java": (".java"),
+}
+
+def _language_for_path(path: str) -> str | None:
+    lowered = path.lower()
+    for lang, exts in LANGUAGE_EXTENSIONS.items():
+        for ext in exts:
+            if lowered.endswith(ext):
+                return lang
+    return None
 
 def get_parent_id(entity: dict) -> str | None:
     pid = entity.get("parent_id")
@@ -34,7 +48,7 @@ def get_containing_module_fqn(conn: sqlite3.Connection, entity_id: str) -> str |
         entity = get_entity_by_id(conn, current_id)
         if not entity:
             return None
-        if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
+        if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE", "COMPILATION_UNIT"):
             return entity["full_path"]
         current_id = get_parent_id(entity)
     return None
@@ -123,34 +137,52 @@ def _process_files(
     base_path: str,
     entity_record_kwargs: dict | None = None,
 ) -> tuple[list[dict], dict[str, str]]:
-    parser = ctx.get_parser("python")
-    linker = ctx.get_linker("python")
-    
-    source_files = []
-    relpath_to_fqn = {}
-    for fmeta in files:
-        abs_path = os.path.join(base_path, fmeta.path)
-        logger.debug("parsing: %s", fmeta.path)
-        sf = parser.parse_file(abs_path, ctx)
-        source_files.append(sf)
-        relpath_to_fqn[fmeta.path] = sf.fqn
-    
-    logger.debug("linking %d source files", len(source_files))
-    linker.link_files(source_files, ctx)
-
-    module_exports = build_module_exports(ctx.entity_registry)
-
     records = []
+    relpath_to_fqn = {}
     kwargs_base = entity_record_kwargs or {}
-    for entity in list(ctx.entity_registry.values()):
-        kwargs = dict(kwargs_base)
-        file_path = getattr(entity, "path", None)
-        if file_path and file_path.endswith(".pyi"):
-            kwargs["is_stub"] = True
-        record = _entity_record(entity, ctx.entity_registry, module_exports, **kwargs)
-        if record:
-            records.append(record)
-    
+
+    by_lang: dict[str, list] = {}
+    for fmeta in files:
+        lang = _language_for_path(fmeta.path)
+        if lang is None:
+            logger.warning("skipping file with unknown language: %s", fmeta.path)
+            continue
+        by_lang.setdefault(lang, []).append(fmeta)
+
+    for lang, lang_files in by_lang.items():
+        parser = ctx.get_parser(lang)
+        linker = ctx.get_linker(lang)
+        if parser is None or linker is None:
+            logger.warning("no %s parser/linker registered, skipping %d files", lang, len(lang_files))
+            continue
+
+        lang_ctx = Context(copy_from=ctx)
+        lang_ctx.entity_registry = EntityRegistry()
+
+        source_files = []
+        for fmeta in lang_files:
+            abs_path = os.path.join(base_path, fmeta.path)
+            logger.debug("parsing: %s", fmeta.path)
+            sf = parser.parse_file(abs_path, lang_ctx)
+            source_files.append(sf)
+            relpath_to_fqn[fmeta.path] = sf.fqn
+
+        logger.debug("linking %d %s source files", len(source_files), lang)
+        linker.link_files(source_files, lang_ctx)
+
+        module_exports = None
+        if lang == "python":
+            module_exports = build_module_exports(lang_ctx.entity_registry)
+
+        for entity in list(lang_ctx.entity_registry.values()):
+            kwargs = dict(kwargs_base)
+            file_path = getattr(entity, "path", None)
+            if file_path and file_path.endswith(".pyi"):
+                kwargs["is_stub"] = True
+            record = _entity_record(entity, lang_ctx.entity_registry, module_exports, language=lang, **kwargs)
+            if record:
+                records.append(record)
+
     logger.debug("processed %d records from %d files", len(records), len(files))
     return records, relpath_to_fqn
 
@@ -228,7 +260,12 @@ def _add_tree_node(parent: Tree, node: _EntityTreeNode) -> None:
         branch = parent.add(branch_label)
         _add_tree_node(branch, child)
 
-def _entity_record(entity, registry, module_exports, source="project", package_name=None, is_stub=False) -> dict | None:
+def _entity_record(entity, registry, module_exports, source="project", package_name=None, is_stub=False, language="python") -> dict | None:
+    if language == "java":
+        from deproc.plugins.java.utils.serialization import entity_to_record
+    else:
+        from deproc.plugins.python.utils.serialization import entity_to_record
+    
     record = entity_to_record(entity, module_exports=module_exports, registry=registry)
 
     if record is None or source == "project":
