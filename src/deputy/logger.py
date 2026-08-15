@@ -1,15 +1,18 @@
 import logging
 import os
 from pathlib import Path
+
 from deputy.utils.config_file import read_config
 
 _log_initialized = False
+
 
 def _reset_logging() -> None:
     global _log_initialized
     root = logging.getLogger("deputy")
     root.handlers.clear()
     _log_initialized = False
+
 
 def init_logging(level: str | None = None, log_file: str | None = None) -> None:
     global _log_initialized
@@ -43,6 +46,7 @@ def init_logging(level: str | None = None, log_file: str | None = None) -> None:
     root.addHandler(fh)
 
     _log_initialized = True
+
 
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(f"deputy.{name}")

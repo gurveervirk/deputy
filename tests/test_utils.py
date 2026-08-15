@@ -1,12 +1,14 @@
 import json
+from unittest.mock import MagicMock
+
 from deproc.core.interfaces.parser.models import (
     Annotation,
+    ControlFlowBlock,
+    ControlFlowGroup,
     FunctionLike,
     Signature,
     SourceRange,
     TypeDefinition,
-    ControlFlowBlock,
-    ControlFlowGroup,
     VariableDeclaration,
 )
 from deproc.plugins.python.linker.models import PythonModule
@@ -17,8 +19,9 @@ from deproc.plugins.python.parser.models import (
     PythonImportAlias,
     PythonTypeAlias,
 )
+
 from deputy.tools.utils import _entity_record
-from unittest.mock import MagicMock
+
 
 class TestEntityRecord:
     def _registry(self, values):
@@ -125,7 +128,10 @@ class TestEntityRecord:
 
         module_exports = {"pkg.mod": {"ExportedClass"}}
         record = _entity_record(entity, self._registry([]), module_exports)
-        assert record["metadata_json"] == '{"fqn": "pkg.mod.ExportedClass", "exported": true}'
+        assert (
+            record["metadata_json"]
+            == '{"fqn": "pkg.mod.ExportedClass", "exported": true}'
+        )
 
     def test_lineno_in_metadata(self):
         entity = MagicMock(spec=FunctionLike)
@@ -240,8 +246,16 @@ class TestEntityRecord:
         assert "if" in record["full_path"]
 
     def test_source_id_stored_in_metadata(self):
-        sr = SourceRange(lineno=5, end_lineno=5, col_offset=0, end_col_offset=10, source_id="mod123")
-        module = PythonModule(id="mod123", fqn="pkg.mod", path="pkg/mod.py", source="", docstring_range=None)
+        sr = SourceRange(
+            lineno=5, end_lineno=5, col_offset=0, end_col_offset=10, source_id="mod123"
+        )
+        module = PythonModule(
+            id="mod123",
+            fqn="pkg.mod",
+            path="pkg/mod.py",
+            source="",
+            docstring_range=None,
+        )
         entity = MagicMock(spec=FunctionLike)
         entity.name = "f"
         entity.fqn = "pkg.mod.f"
@@ -267,15 +281,22 @@ class TestEntityRecord:
         assert "__group__" in record["full_path"]
         assert "if_statement" in record["full_path"]
 
+
 class TestEntityRecordMetadata:
     sr = SourceRange(lineno=5, end_lineno=10, col_offset=0, end_col_offset=8)
 
     def test_docstring_range_stored(self):
         dr = SourceRange(lineno=6, end_lineno=8, col_offset=4, end_col_offset=12)
         entity = PythonFunctionLike(
-            id="f1", name="my_func", fqn="mod.my_func", type="FUNCTION",
-            source_range=self.sr, docstring_range=dr,
-            signature=None, annotations=[], visibility="public",
+            id="f1",
+            name="my_func",
+            fqn="mod.my_func",
+            type="FUNCTION",
+            source_range=self.sr,
+            docstring_range=dr,
+            signature=None,
+            annotations=[],
+            visibility="public",
         )
         record = _entity_record(entity, {}, {})
         meta = json.loads(record["metadata_json"])
@@ -284,14 +305,26 @@ class TestEntityRecordMetadata:
 
     def test_signature_ranges_stored(self):
         sig = Signature(
-            signature_range=SourceRange(lineno=5, end_lineno=5, col_offset=0, end_col_offset=30),
-            arguments_range=SourceRange(lineno=5, end_lineno=5, col_offset=15, end_col_offset=28),
-            return_type_range=SourceRange(lineno=5, end_lineno=5, col_offset=32, end_col_offset=38),
+            signature_range=SourceRange(
+                lineno=5, end_lineno=5, col_offset=0, end_col_offset=30
+            ),
+            arguments_range=SourceRange(
+                lineno=5, end_lineno=5, col_offset=15, end_col_offset=28
+            ),
+            return_type_range=SourceRange(
+                lineno=5, end_lineno=5, col_offset=32, end_col_offset=38
+            ),
         )
         entity = PythonFunctionLike(
-            id="f2", name="my_func", fqn="mod.my_func", type="FUNCTION",
-            source_range=self.sr, docstring_range=None,
-            signature=sig, annotations=[], visibility="public",
+            id="f2",
+            name="my_func",
+            fqn="mod.my_func",
+            type="FUNCTION",
+            source_range=self.sr,
+            docstring_range=None,
+            signature=sig,
+            annotations=[],
+            visibility="public",
         )
         record = _entity_record(entity, {}, {})
         meta = json.loads(record["metadata_json"])
@@ -304,14 +337,22 @@ class TestEntityRecordMetadata:
 
     def test_signature_partial_ranges(self):
         sig = Signature(
-            signature_range=SourceRange(lineno=5, end_lineno=5, col_offset=0, end_col_offset=30),
+            signature_range=SourceRange(
+                lineno=5, end_lineno=5, col_offset=0, end_col_offset=30
+            ),
             arguments_range=None,
             return_type_range=None,
         )
         entity = PythonFunctionLike(
-            id="f3", name="my_func", fqn="mod.my_func", type="FUNCTION",
-            source_range=self.sr, docstring_range=None,
-            signature=sig, annotations=[], visibility="public",
+            id="f3",
+            name="my_func",
+            fqn="mod.my_func",
+            type="FUNCTION",
+            source_range=self.sr,
+            docstring_range=None,
+            signature=sig,
+            annotations=[],
+            visibility="public",
         )
         record = _entity_record(entity, {}, {})
         meta = json.loads(record["metadata_json"])
@@ -320,11 +361,22 @@ class TestEntityRecordMetadata:
         assert "return_type_lineno" not in meta
 
     def test_decorators_stored(self):
-        ann = Annotation(source_range=SourceRange(lineno=4, end_lineno=4, col_offset=0, end_col_offset=5), name="staticmethod")
+        ann = Annotation(
+            source_range=SourceRange(
+                lineno=4, end_lineno=4, col_offset=0, end_col_offset=5
+            ),
+            name="staticmethod",
+        )
         entity = PythonFunctionLike(
-            id="f4", name="my_func", fqn="mod.my_func", type="FUNCTION",
-            source_range=self.sr, docstring_range=None,
-            signature=None, annotations=[ann], visibility="public",
+            id="f4",
+            name="my_func",
+            fqn="mod.my_func",
+            type="FUNCTION",
+            source_range=self.sr,
+            docstring_range=None,
+            signature=None,
+            annotations=[ann],
+            visibility="public",
         )
         record = _entity_record(entity, {}, {})
         meta = json.loads(record["metadata_json"])
@@ -332,9 +384,15 @@ class TestEntityRecordMetadata:
 
     def test_no_decorators_when_empty(self):
         entity = PythonFunctionLike(
-            id="f5", name="my_func", fqn="mod.my_func", type="FUNCTION",
-            source_range=self.sr, docstring_range=None,
-            signature=None, annotations=[], visibility="public",
+            id="f5",
+            name="my_func",
+            fqn="mod.my_func",
+            type="FUNCTION",
+            source_range=self.sr,
+            docstring_range=None,
+            signature=None,
+            annotations=[],
+            visibility="public",
         )
         record = _entity_record(entity, {}, {})
         meta = json.loads(record["metadata_json"])
@@ -342,10 +400,17 @@ class TestEntityRecordMetadata:
 
     def test_parent_classes_stored(self):
         entity = PythonClass(
-            id="c1", name="MyClass", fqn="mod.MyClass", type="CLASS",
-            source_range=self.sr, docstring_range=None,
-            annotations=[], inherits=["mod.Base1", "mod.Base2"],
-            method_ids=[], inner_type_ids=[], property_ids=[],
+            id="c1",
+            name="MyClass",
+            fqn="mod.MyClass",
+            type="CLASS",
+            source_range=self.sr,
+            docstring_range=None,
+            annotations=[],
+            inherits=["mod.Base1", "mod.Base2"],
+            method_ids=[],
+            inner_type_ids=[],
+            property_ids=[],
             visibility="public",
         )
         record = _entity_record(entity, {}, {})
@@ -354,10 +419,17 @@ class TestEntityRecordMetadata:
 
     def test_type_definition_ids_stored(self):
         entity = PythonClass(
-            id="c2", name="MyClass", fqn="mod.MyClass", type="CLASS",
-            source_range=self.sr, docstring_range=None,
-            annotations=[], inherits=[],
-            method_ids=["m1", "m2"], inner_type_ids=["t1"], property_ids=["p1"],
+            id="c2",
+            name="MyClass",
+            fqn="mod.MyClass",
+            type="CLASS",
+            source_range=self.sr,
+            docstring_range=None,
+            annotations=[],
+            inherits=[],
+            method_ids=["m1", "m2"],
+            inner_type_ids=["t1"],
+            property_ids=["p1"],
             visibility="public",
         )
         record = _entity_record(entity, {}, {})
@@ -368,9 +440,15 @@ class TestEntityRecordMetadata:
 
     def test_no_docstring_when_none(self):
         entity = PythonFunctionLike(
-            id="f6", name="my_func", fqn="mod.my_func", type="FUNCTION",
-            source_range=self.sr, docstring_range=None,
-            signature=None, annotations=[], visibility="public",
+            id="f6",
+            name="my_func",
+            fqn="mod.my_func",
+            type="FUNCTION",
+            source_range=self.sr,
+            docstring_range=None,
+            signature=None,
+            annotations=[],
+            visibility="public",
         )
         record = _entity_record(entity, {}, {})
         meta = json.loads(record["metadata_json"])
@@ -379,9 +457,15 @@ class TestEntityRecordMetadata:
 
     def test_no_signature_when_none(self):
         entity = PythonFunctionLike(
-            id="f7", name="my_func", fqn="mod.my_func", type="FUNCTION",
-            source_range=self.sr, docstring_range=None,
-            signature=None, annotations=[], visibility="public",
+            id="f7",
+            name="my_func",
+            fqn="mod.my_func",
+            type="FUNCTION",
+            source_range=self.sr,
+            docstring_range=None,
+            signature=None,
+            annotations=[],
+            visibility="public",
         )
         record = _entity_record(entity, {}, {})
         meta = json.loads(record["metadata_json"])
@@ -392,9 +476,12 @@ class TestEntityRecordMetadata:
     def test_variable_type_annotation_stored(self):
         ta = SourceRange(lineno=10, end_lineno=10, col_offset=20, end_col_offset=30)
         entity = VariableDeclaration(
-            id="v1", source_range=self.sr,
+            id="v1",
+            source_range=self.sr,
             variable_binding=MagicMock(name="var", fqn="mod.var"),
-            value_range=None, type_annotation=ta, modifiers=["export"],
+            value_range=None,
+            type_annotation=ta,
+            modifiers=["export"],
         )
         record = _entity_record(entity, {}, {})
         meta = json.loads(record["metadata_json"])
@@ -403,9 +490,12 @@ class TestEntityRecordMetadata:
 
     def test_variable_modifiers_stored(self):
         entity = VariableDeclaration(
-            id="v2", source_range=self.sr,
+            id="v2",
+            source_range=self.sr,
             variable_binding=MagicMock(name="var", fqn="mod.var"),
-            value_range=None, type_annotation=None, modifiers=["export", "global"],
+            value_range=None,
+            type_annotation=None,
+            modifiers=["export", "global"],
         )
         record = _entity_record(entity, {}, {})
         meta = json.loads(record["metadata_json"])

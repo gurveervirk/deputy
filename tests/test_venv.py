@@ -2,18 +2,21 @@ import json
 import os
 import tempfile
 from unittest.mock import MagicMock
+
 from deproc.core.interfaces.parser.models import FunctionLike
+
 from deputy.database.sqlite import (
-    delete_entities_by_package,
     delete_dependency,
+    delete_entities_by_package,
     get_dependency,
+    get_entity_by_path,
     list_dependencies,
     upsert_dependency,
     upsert_entity,
-    get_entity_by_path,
 )
 from deputy.tools.utils import _entity_record
 from deputy.utils.config_file import get_config, read_config, write_config
+
 
 class TestConfigFile:
     def test_write_and_read(self):
@@ -55,9 +58,12 @@ class TestConfigFile:
             finally:
                 os.chdir(old)
 
+
 class TestDatabaseDeps:
     def test_upsert_and_get_dependency(self, db):
-        upsert_dependency(db, "requests", "2.31.0", "/path", "requests", "venv", '{}', 100.0)
+        upsert_dependency(
+            db, "requests", "2.31.0", "/path", "requests", "venv", "{}", 100.0
+        )
         row = get_dependency(db, "requests")
         assert row["version"] == "2.31.0"
         assert row["install_path"] == "/path"
@@ -84,20 +90,48 @@ class TestDatabaseDeps:
         assert deps[0]["package_name"] == "a"
 
     def test_delete_entities_by_package(self, db):
-        upsert_entity(db, id="d1", language="python", full_path="requests.get", name="get", type="FUNCTION",
-                      metadata_json='{"source":"dependency","package_name":"requests","fqn":"requests.get"}')
-        upsert_entity(db, id="d2", language="python", full_path="requests.post", name="post", type="FUNCTION",
-                      metadata_json='{"source":"dependency","package_name":"requests","fqn":"requests.post"}')
-        upsert_entity(db, id="p1", language="python", full_path="mymod.func", name="func", type="FUNCTION",
-                      metadata_json='{"source":"project","fqn":"mymod.func"}')
+        upsert_entity(
+            db,
+            id="d1",
+            language="python",
+            full_path="requests.get",
+            name="get",
+            type="FUNCTION",
+            metadata_json='{"source":"dependency","package_name":"requests","fqn":"requests.get"}',
+        )
+        upsert_entity(
+            db,
+            id="d2",
+            language="python",
+            full_path="requests.post",
+            name="post",
+            type="FUNCTION",
+            metadata_json='{"source":"dependency","package_name":"requests","fqn":"requests.post"}',
+        )
+        upsert_entity(
+            db,
+            id="p1",
+            language="python",
+            full_path="mymod.func",
+            name="func",
+            type="FUNCTION",
+            metadata_json='{"source":"project","fqn":"mymod.func"}',
+        )
         delete_entities_by_package(db, "requests")
         assert get_entity_by_path(db, "requests.get") is None
         assert get_entity_by_path(db, "requests.post") is None
         assert get_entity_by_path(db, "mymod.func") is not None
 
     def test_delete_entities_by_package_no_match(self, db):
-        upsert_entity(db, id="p1", language="python", full_path="mymod.func", name="func", type="FUNCTION",
-                      metadata_json='{"source":"project","fqn":"mymod.func"}')
+        upsert_entity(
+            db,
+            id="p1",
+            language="python",
+            full_path="mymod.func",
+            name="func",
+            type="FUNCTION",
+            metadata_json='{"source":"project","fqn":"mymod.func"}',
+        )
         delete_entities_by_package(db, "nonexistent")
         assert get_entity_by_path(db, "mymod.func") is not None
 
@@ -124,7 +158,14 @@ class TestEntityRecordSource:
         entity.fqn = "pkg.f"
         entity.type = "FUNCTION"
 
-        record = _entity_record(entity, self._registry([]), {}, source="dependency", package_name="requests", is_stub=True)
+        record = _entity_record(
+            entity,
+            self._registry([]),
+            {},
+            source="dependency",
+            package_name="requests",
+            is_stub=True,
+        )
         meta = json.loads(record["metadata_json"])
         assert meta["source"] == "dependency"
         assert meta["package_name"] == "requests"
@@ -136,7 +177,9 @@ class TestEntityRecordSource:
         entity.fqn = "pkg.f"
         entity.type = "FUNCTION"
 
-        record = _entity_record(entity, self._registry([]), {}, source="dependency", package_name=None)
+        record = _entity_record(
+            entity, self._registry([]), {}, source="dependency", package_name=None
+        )
         meta = json.loads(record["metadata_json"])
         assert meta["source"] == "dependency"
         assert "package_name" not in meta
@@ -147,7 +190,9 @@ class TestEntityRecordSource:
         entity.fqn = "pkg.f"
         entity.type = "FUNCTION"
 
-        record = _entity_record(entity, self._registry([]), {}, source="project", package_name="ignored")
+        record = _entity_record(
+            entity, self._registry([]), {}, source="project", package_name="ignored"
+        )
         meta = json.loads(record["metadata_json"])
         assert "source" not in meta
         assert "package_name" not in meta

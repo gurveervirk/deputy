@@ -1,41 +1,34 @@
+import contextlib
 import json
+
 import typer
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
-from deputy._version import __version__
+
 from deputy.database.sqlite import (
-    get_direct_subclasses,
-    get_transitive_subclasses,
-    get_entity_ids_by_fqn,
-    upsert_inheritance_pin,
-    get_inheritance_pin,
     delete_inheritance_pin,
-    list_inheritance_pins,
+    get_direct_subclasses,
     get_entity_by_id,
+    get_entity_ids_by_fqn,
+    get_inheritance_pin,
+    get_transitive_subclasses,
+    list_inheritance_pins,
     upsert_class_bases,
+    upsert_inheritance_pin,
 )
+from deputy.logger import get_logger, init_logging
 from deputy.tools import (
+    InteractiveResolver,
     build_entity_tree,
+    get_entity_info,
     init_database,
     run_sync,
     search_entities,
-    get_entity_info,
-    InteractiveResolver,
-)
-from deputy.tools.utils import (
-    get_containing_module_fqn,
-    _open_database
-)
-from deputy.logger import (
-    get_logger,
-    init_logging
-)
-from deputy.utils.config_file import (
-    read_config,
-    write_config
 )
 from deputy.tools.inheritance import eager_resolve_all_inherited_members
+from deputy.tools.utils import _open_database, get_containing_module_fqn
+from deputy.utils.config_file import read_config, write_config
 from deputy.utils.git import get_current_branch
 
 logger = get_logger("cli")
@@ -72,11 +65,14 @@ DEFAULT_COLUMNS = ["full_path", "language", "type", "source"]
 app = typer.Typer(no_args_is_help=True)
 console = Console()
 
+
 @app.callback()
 def cli_callback(
     ctx: typer.Context,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress non-error output"),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress non-error output"
+    ),
 ) -> None:
     if verbose:
         init_logging(level="DEBUG")
@@ -85,6 +81,7 @@ def cli_callback(
     else:
         init_logging()
 
+
 @app.command()
 def init(
     path: str = typer.Option(".deputy.db", "--path", "-p", help="Database path"),
@@ -92,11 +89,16 @@ def init(
     init_database(path)
     console.print(f"[green]Initialised database at[/green] [bold]{path}[/bold]")
 
+
 @app.command()
 def sync(
     force: bool = typer.Option(False, "--force", "-f", help="Force full re-sync"),
-    sync_deps: bool = typer.Option(None, "--sync-deps", help="Sync dependency packages from .venv"),
-    no_sync_deps: bool = typer.Option(None, "--no-sync-deps", help="Skip dependency sync"),
+    sync_deps: bool = typer.Option(
+        None, "--sync-deps", help="Sync dependency packages from .venv"
+    ),
+    no_sync_deps: bool = typer.Option(
+        None, "--no-sync-deps", help="Skip dependency sync"
+    ),
 ) -> None:
     resolved = sync_deps
     if no_sync_deps and resolved is None:
@@ -105,19 +107,26 @@ def sync(
         run_sync(force, resolved)
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     console.print("[yellow]Sync complete[/yellow]")
+
 
 @app.command(name="search")
 def search(
     pattern: str = typer.Argument(..., help="Regular expression pattern"),
-    type_filter: list[str] = typer.Option(None, "--type", "-t", help="Filter by entity type (repeatable)"),
+    type_filter: list[str] = typer.Option(
+        None, "--type", "-t", help="Filter by entity type (repeatable)"
+    ),
     language: str = typer.Option(None, "--language", "-l", help="Filter by language"),
     limit: int = typer.Option(None, "--limit", help="Max results"),
     offset: int = typer.Option(0, "--offset", help="Result offset"),
     exact: bool = typer.Option(False, "--exact", "-e", help="Exact match on full_path"),
-    name_only: bool = typer.Option(False, "--name-only", "-n", help="Match name only, not full_path"),
-    show_fqn: bool = typer.Option(False, "--fqn", "-f", help="Show full path in tree output"),
+    name_only: bool = typer.Option(
+        False, "--name-only", "-n", help="Match name only, not full_path"
+    ),
+    show_fqn: bool = typer.Option(
+        False, "--fqn", "-f", help="Show full path in tree output"
+    ),
 ) -> None:
     try:
         results = search_entities(
@@ -131,7 +140,7 @@ def search(
         )
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     if not results:
         console.print("[yellow]No matching entities found[/yellow]")
@@ -149,11 +158,15 @@ def search(
             table.add_row(row["name"], row["type"], row["language"], row["full_path"])
         console.print(table)
 
+
 def _get_file_path(source: str) -> str:
     parts = source.rsplit(":", 1)
     return parts[0] if len(parts) > 1 else source
 
-def _format_range(entity: dict, meta: dict, col: str, extracted: dict | None = None) -> str:
+
+def _format_range(
+    entity: dict, meta: dict, col: str, extracted: dict | None = None
+) -> str:
     if extracted and col in extracted:
         return extracted[col]
     start = meta.get(f"{col}_lineno")
@@ -164,7 +177,10 @@ def _format_range(entity: dict, meta: dict, col: str, extracted: dict | None = N
     loc = f"{path}:{start}" if start == end else f"{path}:{start}-{end}"
     return loc
 
-def _get_column_value(entity: dict, col: str, meta: dict, extracted: dict | None = None) -> str:
+
+def _get_column_value(
+    entity: dict, col: str, meta: dict, extracted: dict | None = None
+) -> str:
     if col == "full_path":
         return entity["full_path"]
     if col == "language":
@@ -218,12 +234,14 @@ def _get_column_value(entity: dict, col: str, meta: dict, extracted: dict | None
         return ""
     return ""
 
+
 def _format_resolved_bases(entity: dict) -> str:
     info = entity.get("_inheritance_info")
     if not info:
         return ""
     resolved = info.get("resolved_bases", [])
     return ", ".join(b["base_full_path"] for b in resolved)
+
 
 def _format_unresolved_bases(entity: dict) -> str:
     """Format unresolved bases for info display.
@@ -247,7 +265,7 @@ def _format_unresolved_bases(entity: dict) -> str:
                 scope = c.get("scope", "")
                 loc = f"{c.get('full_path', '?')}"
                 if "conditional" in scope:
-                    loc += f" (conditional)"
+                    loc += " (conditional)"
                 cand_info.append(loc)
             parts.append(f"{ub['base_full_path']}: {', '.join(cand_info)}")
         else:
@@ -277,7 +295,9 @@ def _print_unresolved_hint(entity: dict) -> None:
             base_labels.append(f"{ub['base_full_path']} [no candidates]")
     entity_fqn = entity.get("full_path", "")
     console.print(f"\n[bold]Found unresolved bases:[/bold] {', '.join(base_labels)}")
-    console.print(f"[dim]Hint: use 'deputy resolve <module>.<name>' to trace imports, then 'deputy pin-inheritance {entity_fqn} <name> <file>:<line>' to pin[/dim]")
+    console.print(
+        f"[dim]Hint: use 'deputy resolve <module>.<name>' to trace imports, then 'deputy pin-inheritance {entity_fqn} <name> <file>:<line>' to pin[/dim]"
+    )
 
 
 def _format_mro(entity: dict) -> str:
@@ -288,6 +308,7 @@ def _format_mro(entity: dict) -> str:
     if mro is None:
         return "[incomplete - unresolved bases]"
     return " → ".join(mro)
+
 
 def _display_info_single(entity: dict, columns: list[str], extract: bool) -> None:
     meta = json.loads(entity["metadata_json"])
@@ -302,14 +323,19 @@ def _display_info_single(entity: dict, columns: list[str], extract: bool) -> Non
         if info and info.get("unresolved_bases"):
             _print_unresolved_hint(entity)
 
+
 def _display_info_table(entities: list[dict], columns: list[str]) -> None:
     meta_list = [json.loads(e["metadata_json"]) for e in entities]
     extracted_list = [e.get("_extracted") for e in entities]
     table = Table(*columns)
     for i, entity in enumerate(entities):
-        row = [_get_column_value(entity, col, meta_list[i], extracted_list[i]) for col in columns]
+        row = [
+            _get_column_value(entity, col, meta_list[i], extracted_list[i])
+            for col in columns
+        ]
         table.add_row(*row)
     console.print(table)
+
 
 def _print_available_columns() -> None:
     table = Table("Column", "Description")
@@ -317,15 +343,32 @@ def _print_available_columns() -> None:
         table.add_row(key, desc)
     console.print(table)
 
+
 @app.command(name="info")
 def get_info(
     full_path: str = typer.Argument(None, help="Exact entity full path"),
-    all_matches: bool = typer.Option(False, "--all", "-a", help="Show all matching entities"),
-    columns: str = typer.Option(None, "--columns", "-c", help="Comma-separated columns to display (use --list-columns to see available)"),
-    list_columns: bool = typer.Option(False, "--list-columns", help="List available columns and descriptions"),
-    type_filter: str = typer.Option(None, "--type", "-t", help="Filter by entity type (e.g. FUNCTION, CLASS)"),
+    all_matches: bool = typer.Option(
+        False, "--all", "-a", help="Show all matching entities"
+    ),
+    columns: str = typer.Option(
+        None,
+        "--columns",
+        "-c",
+        help="Comma-separated columns to display (use --list-columns to see available)",
+    ),
+    list_columns: bool = typer.Option(
+        False, "--list-columns", help="List available columns and descriptions"
+    ),
+    type_filter: str = typer.Option(
+        None, "--type", "-t", help="Filter by entity type (e.g. FUNCTION, CLASS)"
+    ),
     lineno: int = typer.Option(None, "--lineno", help="Filter by line number"),
-    extract: bool = typer.Option(False, "--extract", "-x", help="Extract and display actual source text for signature/docstring"),
+    extract: bool = typer.Option(
+        False,
+        "--extract",
+        "-x",
+        help="Extract and display actual source text for signature/docstring",
+    ),
 ) -> None:
     if list_columns:
         _print_available_columns()
@@ -346,12 +389,13 @@ def get_info(
         )
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     if all_matches:
         if not result:
             console.print(f"[red]Entity not found:[/red] {full_path}")
             raise typer.Exit()
+        assert isinstance(result, list)
         _display_info_table(result, col_list)
         return
 
@@ -359,25 +403,39 @@ def get_info(
         console.print(f"[red]Entity not found:[/red] {full_path}")
         raise typer.Exit()
 
+    assert isinstance(result, dict)
     match_count = result.pop("_match_count", 1)
     _display_info_single(result, col_list, extract)
 
     if match_count > 1 and not type_filter and lineno is None:
-        console.print(f"\n[dark_orange]Found {match_count} matching entities. Use --all to see all, or filter with --type / --lineno. See --help for details.[/dark_orange]")
+        console.print(
+            f"\n[dark_orange]Found {match_count} matching entities. Use --all to see all, or filter with --type / --lineno. See --help for details.[/dark_orange]"
+        )
+
 
 # TODO: Allow user to go back a step, and also go forward to the next step if they had gone back a path
 # TODO: Try handling module members of imported modules (eg: import a.b.c; class X(a.b.c.Base): pass) - this is tricky because we need to resolve the import chain and then find the base class in the imported module
 @app.command(name="resolve")
 def resolve(
-    symbol: str = typer.Argument(..., help="Symbol to resolve, in the form <module_fqn>.<symbol_name>"),
-    auto: bool = typer.Option(False, "--auto", help="Only stop when multiple choices exist"),
-    step: bool = typer.Option(False, "--step", help="Stop at every step regardless of ambiguity"),
+    symbol: str = typer.Argument(
+        ..., help="Symbol to resolve, in the form <module_fqn>.<symbol_name>"
+    ),
+    auto: bool = typer.Option(
+        False, "--auto", help="Only stop when multiple choices exist"
+    ),
+    step: bool = typer.Option(
+        False, "--step", help="Stop at every step regardless of ambiguity"
+    ),
     all: bool = typer.Option(False, "--all", help="Show all possible resolutions"),
-    compact: bool = typer.Option(False, "--compact", help="Compact output with --all (terminal entities only)"),
+    compact: bool = typer.Option(
+        False, "--compact", help="Compact output with --all (terminal entities only)"
+    ),
 ) -> None:
     parts = symbol.rsplit(".", 1)
     if len(parts) != 2:
-        console.print("[red]Symbol must be in the form <module_fqn>.<symbol_name>[/red]")
+        console.print(
+            "[red]Symbol must be in the form <module_fqn>.<symbol_name>[/red]"
+        )
         raise typer.Exit(code=1)
     module_fqn, symbol_name = parts
 
@@ -385,7 +443,7 @@ def resolve(
         conn = _open_database()
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     if compact and not all:
         console.print("[red]--compact requires --all[/red]")
@@ -406,16 +464,19 @@ def resolve(
 
     conn.close()
 
+
 @app.command()
 def subclasses(
     full_path: str = typer.Argument(..., help="Base class FQN to find subclasses of"),
-    transitive: bool = typer.Option(False, "--transitive", "-t", help="Include indirect subclasses"),
+    transitive: bool = typer.Option(
+        False, "--transitive", "-t", help="Include indirect subclasses"
+    ),
 ) -> None:
     try:
         conn = _open_database()
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     branch = get_current_branch()
 
@@ -432,29 +493,31 @@ def subclasses(
 
     tree = Tree(f"Subclasses of [bold]{full_path}[/bold]")
     for sub in subs:
-        meta = {}
-        try:
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
             meta = json.loads(sub["metadata_json"])
-        except (json.JSONDecodeError, TypeError):
-            pass
         lineno = meta.get("lineno", "")
         loc = f" : {lineno}" if lineno else ""
         tree.add(f"{sub['type']} {sub['full_path']}{loc}")
     console.print(tree)
 
+
 @app.command(name="pin-inheritance")
 def pin_inheritance(
     class_fqn: str = typer.Argument(None, help="Class FQN to pin a base for"),
     base_name: str = typer.Argument(None, help="Base class name to resolve"),
-    entity_ref: str = typer.Argument(None, help="file_path:lineno[:col_offset] of the candidate to pin"),
+    entity_ref: str = typer.Argument(
+        None, help="file_path:lineno[:col_offset] of the candidate to pin"
+    ),
     remove: bool = typer.Option(False, "--remove", "-r", help="Remove an existing pin"),
-    list_pins: bool = typer.Option(False, "--list", "-l", help="List all pins for current branch"),
+    list_pins: bool = typer.Option(
+        False, "--list", "-l", help="List all pins for current branch"
+    ),
 ) -> None:
     try:
         conn = _open_database()
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     branch = get_current_branch()
 
@@ -466,12 +529,18 @@ def pin_inheritance(
             return
         table = Table("Class", "Base Name", "Pinned Entity ID")
         for pin in pins:
-            table.add_row(pin.get("class_fqn", pin["class_full_path"]), pin["base_name"], pin["pinned_entity_id"])
+            table.add_row(
+                pin.get("class_fqn", pin["class_full_path"]),
+                pin["base_name"],
+                pin["pinned_entity_id"],
+            )
         console.print(table)
         return
 
     if not class_fqn or not base_name:
-        console.print("[red]Usage: deputy pin-inheritance <class_fqn> <base_name> <file_path:lineno>[/red]")
+        console.print(
+            "[red]Usage: deputy pin-inheritance <class_fqn> <base_name> <file_path:lineno>[/red]"
+        )
         console.print("       deputy pin-inheritance --list")
         console.print("       deputy pin-inheritance --remove <class_fqn> <base_name>")
         raise typer.Exit(code=1)
@@ -493,11 +562,17 @@ def pin_inheritance(
                             "DELETE FROM class_bases WHERE class_entity_id = ? AND base_full_path = ?",
                             (eid, pinned_entity["full_path"]),
                         )
-                        upsert_class_bases(conn, eid, [{
-                            "base_full_path": base_name,
-                            "base_entity_id": None,
-                            "is_resolved": False,
-                        }])
+                        upsert_class_bases(
+                            conn,
+                            eid,
+                            [
+                                {
+                                    "base_full_path": base_name,
+                                    "base_entity_id": None,
+                                    "is_resolved": False,
+                                }
+                            ],
+                        )
                 delete_inheritance_pin(conn, eid, base_name, branch)
                 console.print(f"[green]Removed pin for[/green] {class_fqn}:{base_name}")
                 break
@@ -506,7 +581,9 @@ def pin_inheritance(
             raise typer.Exit(code=1)
         eager_resolve_all_inherited_members(conn, records=None, branch=branch)
         conn.commit()
-        console.print(f"[dim]Inherited member aliases re-resolved after pin removal[/dim]")
+        console.print(
+            "[dim]Inherited member aliases re-resolved after pin removal[/dim]"
+        )
         conn.close()
         return
 
@@ -533,7 +610,9 @@ def pin_inheritance(
 
     if lineno is None:
         conn.close()
-        console.print("[red]Entity reference must be in the form file_path:lineno[:col_offset][/red]")
+        console.print(
+            "[red]Entity reference must be in the form file_path:lineno[:col_offset][/red]"
+        )
         raise typer.Exit(code=1)
 
     module_fqn = get_containing_module_fqn(conn, class_entity_id)
@@ -560,20 +639,32 @@ def pin_inheritance(
     candidates = [dict(r) for r in rows]
 
     if col_offset is not None:
-        candidates = [c for c in candidates
-                      if json.loads(get_entity_by_id(conn, c["id"])["metadata_json"]).get("col_offset") == col_offset]
+        candidates = [
+            c
+            for c in candidates
+            if (entity := get_entity_by_id(conn, c["id"])) is not None
+            and json.loads(entity["metadata_json"]).get("col_offset") == col_offset
+        ]
 
     if not candidates:
         conn.close()
-        console.print(f"[red]No entity found at {entity_ref} in module {module_fqn}[/red]")
+        console.print(
+            f"[red]No entity found at {entity_ref} in module {module_fqn}[/red]"
+        )
         raise typer.Exit(code=1)
 
     if len(candidates) > 1:
         conn.close()
-        console.print(f"[red]Multiple entities found at {entity_ref}. Provide col_offset to disambiguate.[/red]")
+        console.print(
+            f"[red]Multiple entities found at {entity_ref}. Provide col_offset to disambiguate.[/red]"
+        )
         raise typer.Exit(code=1)
 
     import_alias_entity = get_entity_by_id(conn, candidates[0]["id"])
+    if import_alias_entity is None:
+        conn.close()
+        console.print(f"[red]Entity not found: {candidates[0]['id']}[/red]")
+        raise typer.Exit(code=1)
     alias_meta = json.loads(import_alias_entity["metadata_json"])
     import_stmt = get_entity_by_id(conn, import_alias_entity["parent_id"])
     if import_stmt:
@@ -599,16 +690,23 @@ def pin_inheritance(
         (class_entity_id, base_name),
     )
     pinned_fqn = target_entity["full_path"] if target_entity else base_name
-    upsert_class_bases(conn, class_entity_id, [{
-        "base_full_path": pinned_fqn,
-        "base_entity_id": pinned_entity_id,
-        "is_resolved": True,
-    }])
+    upsert_class_bases(
+        conn,
+        class_entity_id,
+        [
+            {
+                "base_full_path": pinned_fqn,
+                "base_entity_id": pinned_entity_id,
+                "is_resolved": True,
+            }
+        ],
+    )
     eager_resolve_all_inherited_members(conn, records=None, branch=branch)
     conn.commit()
     console.print(f"[green]Pinned[/green] {class_fqn}:{base_name} → {entity_ref}")
-    console.print(f"[dim]Inherited member aliases re-resolved after pin[/dim]")
+    console.print("[dim]Inherited member aliases re-resolved after pin[/dim]")
     conn.close()
+
 
 @app.command()
 def config(
@@ -625,6 +723,7 @@ def config(
     else:
         write_config(key, value)
         console.print(f"[green]Set[/green] {key}={value}")
+
 
 def main() -> None:
     app()

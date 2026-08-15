@@ -1,11 +1,14 @@
 import json
 import os
 import tempfile
-import pytest
 from unittest.mock import patch
-from deputy import _get_file_path, _format_range, _get_column_value
+
+import pytest
+
+from deputy import _format_range, _get_column_value, _get_file_path
+from deputy.database.sqlite import set_config, upsert_branch_entities, upsert_entity
 from deputy.tools.core import _compute_source, get_entity_info
-from deputy.database.sqlite import upsert_entity, upsert_branch_entities, set_config
+
 
 class TestGetFilePath:
     def test_with_lineno_suffix(self):
@@ -19,6 +22,7 @@ class TestGetFilePath:
 
     def test_only_colon(self):
         assert _get_file_path(":") == ""
+
 
 class TestFormatRange:
     def test_single_line(self):
@@ -57,9 +61,12 @@ class TestFormatRange:
         meta = {"signature_lineno": 5, "signature_end_lineno": 5}
         assert _format_range(entity, meta, "signature") == ":5"
 
+
 class TestGetColumnValue:
     def test_full_path(self):
-        assert _get_column_value({"full_path": "mod.func"}, "full_path", {}) == "mod.func"
+        assert (
+            _get_column_value({"full_path": "mod.func"}, "full_path", {}) == "mod.func"
+        )
 
     def test_language(self):
         assert _get_column_value({"language": "python"}, "language", {}) == "python"
@@ -77,7 +84,10 @@ class TestGetColumnValue:
         assert _get_column_value({}, "end_lineno", {"end_lineno": 20}) == "20"
 
     def test_source(self):
-        assert _get_column_value({"_source": "src/mod.py:10"}, "source", {}) == "src/mod.py:10"
+        assert (
+            _get_column_value({"_source": "src/mod.py:10"}, "source", {})
+            == "src/mod.py:10"
+        )
 
     def test_signature_delegates_to_format_range(self):
         entity = {"_source": "src/mod.py:5"}
@@ -100,7 +110,12 @@ class TestGetColumnValue:
         assert _get_column_value(entity, "docstring", meta) == "src/mod.py:6-8"
 
     def test_decorators(self):
-        assert _get_column_value({}, "decorators", {"decorators": ["staticmethod", "property"]}) == "staticmethod, property"
+        assert (
+            _get_column_value(
+                {}, "decorators", {"decorators": ["staticmethod", "property"]}
+            )
+            == "staticmethod, property"
+        )
 
     def test_decorators_empty(self):
         assert _get_column_value({}, "decorators", {"decorators": []}) == ""
@@ -109,7 +124,12 @@ class TestGetColumnValue:
         assert _get_column_value({}, "decorators", {}) == ""
 
     def test_parent_classes(self):
-        assert _get_column_value({}, "parent_classes", {"parent_classes": ["Base1", "Base2"]}) == "Base1, Base2"
+        assert (
+            _get_column_value(
+                {}, "parent_classes", {"parent_classes": ["Base1", "Base2"]}
+            )
+            == "Base1, Base2"
+        )
 
     def test_visibility(self):
         assert _get_column_value({}, "visibility", {"visibility": "public"}) == "public"
@@ -123,13 +143,20 @@ class TestGetColumnValue:
     def test_exported_missing(self):
         assert _get_column_value({}, "exported", {}) == ""
 
+
 class TestComputeSource:
     def test_module_with_path_no_lineno(self, db):
         db.execute(
             "INSERT INTO entities (id, language, full_path, name, type, metadata_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            ("mod1", "python", "pkg.mod", "mod", "MODULE",
-             '{"fqn":"pkg.mod","path":"pkg/mod.py"}'),
+            (
+                "mod1",
+                "python",
+                "pkg.mod",
+                "mod",
+                "MODULE",
+                '{"fqn":"pkg.mod","path":"pkg/mod.py"}',
+            ),
         )
         entity = dict(db.execute("SELECT * FROM entities WHERE id='mod1'").fetchone())
         assert _compute_source(entity, db) == "pkg/mod.py"
@@ -138,14 +165,26 @@ class TestComputeSource:
         db.execute(
             "INSERT INTO entities (id, language, full_path, name, type, metadata_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            ("mod1", "python", "pkg.mod", "mod", "MODULE",
-             '{"fqn":"pkg.mod","path":"pkg/mod.py"}'),
+            (
+                "mod1",
+                "python",
+                "pkg.mod",
+                "mod",
+                "MODULE",
+                '{"fqn":"pkg.mod","path":"pkg/mod.py"}',
+            ),
         )
         db.execute(
             "INSERT INTO entities (id, language, full_path, name, type, metadata_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            ("func1", "python", "pkg.mod.func", "func", "FUNCTION",
-             '{"fqn":"pkg.mod.func","lineno":5,"source_id":"mod1"}'),
+            (
+                "func1",
+                "python",
+                "pkg.mod.func",
+                "func",
+                "FUNCTION",
+                '{"fqn":"pkg.mod.func","lineno":5,"source_id":"mod1"}',
+            ),
         )
         entity = dict(db.execute("SELECT * FROM entities WHERE id='func1'").fetchone())
         assert _compute_source(entity, db) == "pkg/mod.py:5"
@@ -154,8 +193,14 @@ class TestComputeSource:
         db.execute(
             "INSERT INTO entities (id, language, full_path, name, type, metadata_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            ("func1", "python", "pkg.mod.func", "func", "FUNCTION",
-             '{"fqn":"pkg.mod.func","lineno":5}'),
+            (
+                "func1",
+                "python",
+                "pkg.mod.func",
+                "func",
+                "FUNCTION",
+                '{"fqn":"pkg.mod.func","lineno":5}',
+            ),
         )
         entity = dict(db.execute("SELECT * FROM entities WHERE id='func1'").fetchone())
         assert _compute_source(entity, db) == ""
@@ -164,8 +209,14 @@ class TestComputeSource:
         db.execute(
             "INSERT INTO entities (id, language, full_path, name, type, metadata_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            ("func1", "python", "pkg.mod.func", "func", "FUNCTION",
-             '{"fqn":"pkg.mod.func"}'),
+            (
+                "func1",
+                "python",
+                "pkg.mod.func",
+                "func",
+                "FUNCTION",
+                '{"fqn":"pkg.mod.func"}',
+            ),
         )
         entity = dict(db.execute("SELECT * FROM entities WHERE id='func1'").fetchone())
         assert _compute_source(entity, db) == ""
@@ -174,8 +225,14 @@ class TestComputeSource:
         db.execute(
             "INSERT INTO entities (id, language, full_path, name, type, metadata_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            ("func1", "python", "pkg.mod.func", "func", "FUNCTION",
-             '{"fqn":"pkg.mod.func","lineno":5,"source_id":"nonexistent"}'),
+            (
+                "func1",
+                "python",
+                "pkg.mod.func",
+                "func",
+                "FUNCTION",
+                '{"fqn":"pkg.mod.func","lineno":5,"source_id":"nonexistent"}',
+            ),
         )
         entity = dict(db.execute("SELECT * FROM entities WHERE id='func1'").fetchone())
         assert _compute_source(entity, db) == ""
@@ -188,18 +245,37 @@ MOCK_BRANCH = "main"
 class TestGetEntityInfo:
     @pytest.fixture
     def info_db(self):
-        from deputy.database.sqlite import open_database, init_schema
+        from deputy.database.sqlite import init_schema, open_database
+
         conn = open_database(":memory:")
         init_schema(conn)
-        upsert_entity(conn, id="e1", language="python", full_path="mod.func",
-                      name="func", type="FUNCTION",
-                      metadata_json='{"fqn":"mod.func","lineno":5}')
-        upsert_entity(conn, id="e2", language="python", full_path="mod.func",
-                      name="func", type="CLASS",
-                      metadata_json='{"fqn":"mod.func","lineno":10}')
-        upsert_entity(conn, id="e3", language="python", full_path="mod.other",
-                      name="other", type="FUNCTION",
-                      metadata_json='{"fqn":"mod.other","lineno":15}')
+        upsert_entity(
+            conn,
+            id="e1",
+            language="python",
+            full_path="mod.func",
+            name="func",
+            type="FUNCTION",
+            metadata_json='{"fqn":"mod.func","lineno":5}',
+        )
+        upsert_entity(
+            conn,
+            id="e2",
+            language="python",
+            full_path="mod.func",
+            name="func",
+            type="CLASS",
+            metadata_json='{"fqn":"mod.func","lineno":10}',
+        )
+        upsert_entity(
+            conn,
+            id="e3",
+            language="python",
+            full_path="mod.other",
+            name="other",
+            type="FUNCTION",
+            metadata_json='{"fqn":"mod.other","lineno":15}',
+        )
         upsert_branch_entities(conn, "main", ["e1", "e2", "e3"])
         conn.commit()
         return conn
@@ -287,9 +363,15 @@ class TestGetEntityInfo:
             assert meta["lineno"] == 10
 
     def test_combined_filters(self, info_db):
-        upsert_entity(info_db, id="e4", language="python", full_path="mod.func",
-                      name="func", type="FUNCTION",
-                      metadata_json='{"fqn":"mod.func","lineno":20}')
+        upsert_entity(
+            info_db,
+            id="e4",
+            language="python",
+            full_path="mod.func",
+            name="func",
+            type="FUNCTION",
+            metadata_json='{"fqn":"mod.func","lineno":20}',
+        )
         upsert_branch_entities(info_db, "main", ["e4"])
         info_db.commit()
         with (
@@ -320,21 +402,40 @@ class TestGetEntityInfo:
             info_db.commit()
 
             source_meta = json.dumps({"fqn": "mod", "path": os.path.basename(tmp_path)})
-            upsert_entity(info_db, id="mod1", language="python",
-                          full_path="mod", name="mod", type="MODULE",
-                          metadata_json=source_meta)
+            upsert_entity(
+                info_db,
+                id="mod1",
+                language="python",
+                full_path="mod",
+                name="mod",
+                type="MODULE",
+                metadata_json=source_meta,
+            )
             upsert_branch_entities(info_db, "main", ["mod1"])
 
-            func_meta = json.dumps({
-                "fqn": "mod.func", "lineno": 1, "end_lineno": 2,
-                "source_id": "mod1",
-                "signature_lineno": 1, "signature_end_lineno": 1,
-                "arguments_lineno": 1, "arguments_end_lineno": 1,
-                "return_type_lineno": 1, "return_type_end_lineno": 1,
-            })
-            upsert_entity(info_db, id="func1", language="python",
-                          full_path="mod.func", name="func", type="FUNCTION",
-                          metadata_json=func_meta)
+            func_meta = json.dumps(
+                {
+                    "fqn": "mod.func",
+                    "lineno": 1,
+                    "end_lineno": 2,
+                    "source_id": "mod1",
+                    "signature_lineno": 1,
+                    "signature_end_lineno": 1,
+                    "arguments_lineno": 1,
+                    "arguments_end_lineno": 1,
+                    "return_type_lineno": 1,
+                    "return_type_end_lineno": 1,
+                }
+            )
+            upsert_entity(
+                info_db,
+                id="func1",
+                language="python",
+                full_path="mod.func",
+                name="func",
+                type="FUNCTION",
+                metadata_json=func_meta,
+            )
             upsert_branch_entities(info_db, "main", ["func1"])
             info_db.commit()
 
@@ -352,17 +453,34 @@ class TestGetEntityInfo:
             os.unlink(tmp_path)
 
     def test_extract_no_file_graceful(self, info_db):
-        upsert_entity(info_db, id="mod1", language="python",
-                      full_path="mod", name="mod", type="MODULE",
-                      metadata_json='{"fqn":"mod","path":"nonexistent.py"}')
+        upsert_entity(
+            info_db,
+            id="mod1",
+            language="python",
+            full_path="mod",
+            name="mod",
+            type="MODULE",
+            metadata_json='{"fqn":"mod","path":"nonexistent.py"}',
+        )
         upsert_branch_entities(info_db, "main", ["mod1"])
-        func_meta = json.dumps({
-            "fqn": "mod.func", "lineno": 1, "source_id": "mod1",
-            "signature_lineno": 1, "signature_end_lineno": 1,
-        })
-        upsert_entity(info_db, id="func1", language="python",
-                      full_path="mod.func", name="func", type="FUNCTION",
-                      metadata_json=func_meta)
+        func_meta = json.dumps(
+            {
+                "fqn": "mod.func",
+                "lineno": 1,
+                "source_id": "mod1",
+                "signature_lineno": 1,
+                "signature_end_lineno": 1,
+            }
+        )
+        upsert_entity(
+            info_db,
+            id="func1",
+            language="python",
+            full_path="mod.func",
+            name="func",
+            type="FUNCTION",
+            metadata_json=func_meta,
+        )
         upsert_branch_entities(info_db, "main", ["func1"])
         info_db.commit()
 

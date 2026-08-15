@@ -1,14 +1,17 @@
 from __future__ import annotations
-from collections.abc import Set as AbstractSet
-from deproc.core.interfaces.symbol_cache import SymbolCache
+
 import json
+from collections.abc import Set as AbstractSet
+
+from deproc.core.interfaces.symbol_cache import SymbolCache
+
 
 class SqliteSymbolCache(SymbolCache):
     language = "python"
 
     def __init__(self, conn):
         self.conn = conn
-        self.cache = conn # Dummy assignment, self.cache is not used here
+        self.cache = conn  # Dummy assignment, self.cache is not used here
 
     def get(self, module_fqn: str, symbol_name: str):
         row = self.conn.execute(
@@ -17,13 +20,26 @@ class SqliteSymbolCache(SymbolCache):
         ).fetchone()
         if row is None:
             return None
-        return set(json.loads(row["resolved_ids"])), set(json.loads(row["unresolved_ids"]))
+        return set(json.loads(row["resolved_ids"])), set(
+            json.loads(row["unresolved_ids"])
+        )
 
-    def set(self, module_fqn: str, symbol_name: str, resolved_ids: AbstractSet[str], unresolved_ids: AbstractSet[str]):
+    def set(
+        self,
+        module_fqn: str,
+        symbol_name: str,
+        resolved_ids: AbstractSet[str],
+        unresolved_ids: AbstractSet[str],
+    ):
         self.conn.execute(
             """INSERT OR REPLACE INTO cache_entries (module_fqn, symbol_name, resolved_ids, unresolved_ids)
                VALUES (?, ?, ?, ?)""",
-            (module_fqn, symbol_name, json.dumps(list(resolved_ids)), json.dumps(list(unresolved_ids))),
+            (
+                module_fqn,
+                symbol_name,
+                json.dumps(list(resolved_ids)),
+                json.dumps(list(unresolved_ids)),
+            ),
         )
         self.conn.commit()
 
@@ -35,7 +51,9 @@ class SqliteSymbolCache(SymbolCache):
             (module_fqn, cache_module_fqn, cache_symbol_name),
         )
 
-    def add_cache_keys_for_module(self, module_fqn: str, keys: AbstractSet[tuple[str, str]]):
+    def add_cache_keys_for_module(
+        self, module_fqn: str, keys: AbstractSet[tuple[str, str]]
+    ):
         for key in keys:
             self._link(module_fqn, key)
         self.conn.commit()
@@ -47,7 +65,9 @@ class SqliteSymbolCache(SymbolCache):
         ).fetchall()
         return {(row["cache_module_fqn"], row["cache_symbol_name"]) for row in rows}
 
-    def add_modules_for_cache_key(self, key: tuple[str, str], modules: AbstractSet[str]):
+    def add_modules_for_cache_key(
+        self, key: tuple[str, str], modules: AbstractSet[str]
+    ):
         cache_module_fqn, cache_symbol_name = key
         for module_fqn in modules:
             self.conn.execute(
@@ -71,7 +91,9 @@ class SqliteSymbolCache(SymbolCache):
         self.conn.commit()
 
     def clear_module(self, module_fqn: str):
-        for cache_module_fqn, cache_symbol_name in self.get_cache_keys_for_module(module_fqn):
+        for cache_module_fqn, cache_symbol_name in self.get_cache_keys_for_module(
+            module_fqn
+        ):
             self.conn.execute(
                 "DELETE FROM cache_entries WHERE module_fqn = ? AND symbol_name = ?",
                 (cache_module_fqn, cache_symbol_name),

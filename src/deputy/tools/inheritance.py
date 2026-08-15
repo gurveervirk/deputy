@@ -1,28 +1,34 @@
+import contextlib
 import json
 import sqlite3
+
 from deproc.plugins.python.utils.mro import compute_mro_from_bases
+
 from deputy.database.sqlite import (
-    get_entity_ids_by_fqn,
+    delete_class_bases_by_class,
+    get_direct_bases,
+    get_entities_by_ids,
+    get_entities_by_path,
     get_entity_by_id,
     get_entity_by_path,
-    get_entities_by_path,
-    get_entities_by_ids,
-    delete_class_bases_by_class,
+    get_entity_ids_by_fqn,
+    get_inheritance_pin,
     upsert_class_bases,
     upsert_entity,
-    get_direct_bases,
-    get_inheritance_pin,
 )
 from deputy.logger import get_logger
-from deputy.utils.git import get_current_branch
 from deputy.tools.utils import (
-    get_parent_id,
     get_containing_module_fqn,
+    get_parent_id,
 )
+from deputy.utils.git import get_current_branch
 
 logger = get_logger("tools.inheritance")
 
-def _resolve_alias_target(conn: sqlite3.Connection, alias_entity: dict) -> tuple[str | None, str | None]:
+
+def _resolve_alias_target(
+    conn: sqlite3.Connection, alias_entity: dict
+) -> tuple[str | None, str | None]:
     """Resolve an IMPORT_ALIAS entity to the FQN and entity ID of its target class/function."""
     meta = json.loads(alias_entity["metadata_json"])
     original_name = meta.get("original_name", alias_entity.get("name", ""))
@@ -62,22 +68,28 @@ def resolve_base_name_in_module(
         if ent["type"] == "IMPORT_ALIAS":
             meta = json.loads(ent["metadata_json"])
             ent_lineno = meta.get("lineno")
-            if class_lineno is not None and ent_lineno is not None and ent_lineno >= class_lineno:
+            if (
+                class_lineno is not None
+                and ent_lineno is not None
+                and ent_lineno >= class_lineno
+            ):
                 continue
             # Classify scope: walk parent chain to check for ControlFlowBlock
             scope = _classify_candidate_scope(conn, ent)
             # Resolve IMPORT_ALIAS to its target entity (the actual class being imported)
             resolved_fqn, resolved_entity_id = _resolve_alias_target(conn, ent)
-            candidates.append({
-                "entity": ent,
-                "full_path": ent["full_path"],
-                "entity_id": ent["id"],
-                "resolved_fqn": resolved_fqn,
-                "resolved_entity_id": resolved_entity_id,
-                "lineno": ent_lineno,
-                "scope": scope,
-                "kind": "IMPORT_ALIAS",
-            })
+            candidates.append(
+                {
+                    "entity": ent,
+                    "full_path": ent["full_path"],
+                    "entity_id": ent["id"],
+                    "resolved_fqn": resolved_fqn,
+                    "resolved_entity_id": resolved_entity_id,
+                    "lineno": ent_lineno,
+                    "scope": scope,
+                    "kind": "IMPORT_ALIAS",
+                }
+            )
 
     # Find direct CLASS definitions in the same module with the same name
     class_ids = get_entity_ids_by_fqn(conn, f"{module_fqn}.{base_name}")
@@ -86,21 +98,28 @@ def resolve_base_name_in_module(
         if ent["type"] == "CLASS":
             meta = json.loads(ent["metadata_json"])
             ent_lineno = meta.get("lineno")
-            if class_lineno is not None and ent_lineno is not None and ent_lineno >= class_lineno:
+            if (
+                class_lineno is not None
+                and ent_lineno is not None
+                and ent_lineno >= class_lineno
+            ):
                 continue
             scope = _classify_candidate_scope(conn, ent)
-            candidates.append({
-                "entity": ent,
-                "full_path": ent["full_path"],
-                "entity_id": ent["id"],
-                "resolved_fqn": ent["full_path"],
-                "resolved_entity_id": ent["id"],
-                "lineno": ent_lineno,
-                "scope": scope,
-                "kind": "CLASS",
-            })
+            candidates.append(
+                {
+                    "entity": ent,
+                    "full_path": ent["full_path"],
+                    "entity_id": ent["id"],
+                    "resolved_fqn": ent["full_path"],
+                    "resolved_entity_id": ent["id"],
+                    "lineno": ent_lineno,
+                    "scope": scope,
+                    "kind": "CLASS",
+                }
+            )
 
     return candidates
+
 
 def _classify_candidate_scope(conn: sqlite3.Connection, entity: dict) -> str:
     """Walk parent chain to determine if the entity is module-level or conditional.
@@ -113,25 +132,29 @@ def _classify_candidate_scope(conn: sqlite3.Connection, entity: dict) -> str:
         if not current:
             break
         if current["type"] == "CONTROL_FLOW_BLOCK":
-            meta = json.loads(current["metadata_json"])
             return f"conditional:{current.get('name', '')}"
         if current["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
             return "module_level"
         current_id = get_parent_id(current)
     return "module_level"
 
+
 def pick_closest_module_level_candidate(candidates: list[dict]) -> dict | None:
     """Return the module-level candidate closest to (just before) the class definition."""
     module_level = [c for c in candidates if c["scope"] == "module_level"]
     if not module_level:
         return None
-    module_level.sort(key=lambda c: c["lineno"] if c["lineno"] is not None else -1, reverse=True)
+    module_level.sort(
+        key=lambda c: c["lineno"] if c["lineno"] is not None else -1, reverse=True
+    )
     return module_level[0]
+
 
 def has_multiple_candidates(candidates: list[dict]) -> bool:
     """Return True if multiple module-level candidates exist (ambiguous import)."""
     module_level = [c for c in candidates if c["scope"] == "module_level"]
     return len(module_level) > 1
+
 
 def resolve_all_inherits(
     conn: sqlite3.Connection,
@@ -156,64 +179,95 @@ def resolve_all_inherits(
 
         resolved_bases = []
         for base_name in parent_classes:
-            candidates = resolve_base_name_in_module(conn, base_name, module_fqn, class_lineno)
+            candidates = resolve_base_name_in_module(
+                conn, base_name, module_fqn, class_lineno
+            )
 
             closest = pick_closest_module_level_candidate(candidates)
 
-            if closest and not has_multiple_candidates(candidates) and len([c for c in candidates if c["scope"].startswith("module_level")]) == 1:
+            if (
+                closest
+                and not has_multiple_candidates(candidates)
+                and len(
+                    [c for c in candidates if c["scope"].startswith("module_level")]
+                )
+                == 1
+            ):
                 resolved_entity_id = closest.get("resolved_entity_id")
                 if resolved_entity_id is None:
                     candidates_info = []
                     for c in candidates:
-                        candidates_info.append({
+                        candidates_info.append(
+                            {
+                                "full_path": c["full_path"],
+                                "entity_id": c["entity_id"],
+                                "lineno": c["lineno"],
+                                "scope": c["scope"],
+                                "kind": c["kind"],
+                            }
+                        )
+                    resolved_bases.append(
+                        {
+                            "base_full_path": base_name,
+                            "base_entity_id": None,
+                            "is_resolved": False,
+                            "branch_info": json.dumps(candidates_info),
+                        }
+                    )
+                    logger.info(
+                        "unresolved base %s for %s: target not in DB",
+                        base_name,
+                        record["full_path"],
+                    )
+                else:
+                    resolved_bases.append(
+                        {
+                            "base_full_path": closest["resolved_fqn"],
+                            "base_entity_id": resolved_entity_id,
+                            "is_resolved": True,
+                            "branch_info": None,
+                        }
+                    )
+            elif candidates:
+                candidates_info = []
+                for c in candidates:
+                    candidates_info.append(
+                        {
                             "full_path": c["full_path"],
                             "entity_id": c["entity_id"],
                             "lineno": c["lineno"],
                             "scope": c["scope"],
                             "kind": c["kind"],
-                        })
-                    resolved_bases.append({
+                        }
+                    )
+                resolved_bases.append(
+                    {
                         "base_full_path": base_name,
                         "base_entity_id": None,
                         "is_resolved": False,
                         "branch_info": json.dumps(candidates_info),
-                    })
-                    logger.info("unresolved base %s for %s: target not in DB", base_name, record["full_path"])
-                else:
-                    resolved_bases.append({
-                        "base_full_path": closest["resolved_fqn"],
-                        "base_entity_id": resolved_entity_id,
-                        "is_resolved": True,
-                        "branch_info": None,
-                    })
-            elif candidates:
-                candidates_info = []
-                for c in candidates:
-                    candidates_info.append({
-                        "full_path": c["full_path"],
-                        "entity_id": c["entity_id"],
-                        "lineno": c["lineno"],
-                        "scope": c["scope"],
-                        "kind": c["kind"],
-                    })
-                resolved_bases.append({
-                    "base_full_path": base_name,
-                    "base_entity_id": None,
-                    "is_resolved": False,
-                    "branch_info": json.dumps(candidates_info),
-                })
+                    }
+                )
                 logger.info(
                     "unresolved base %s for %s: %d candidates (conditional)",
-                    base_name, record["full_path"], len(candidates),
+                    base_name,
+                    record["full_path"],
+                    len(candidates),
                 )
             else:
-                resolved_bases.append({
-                    "base_full_path": base_name,
-                    "base_entity_id": None,
-                    "is_resolved": False,
-                    "branch_info": None,
-                })
-                logger.info("unresolved base %s for %s: no candidates found", base_name, record["full_path"])
+                resolved_bases.append(
+                    {
+                        "base_full_path": base_name,
+                        "base_entity_id": None,
+                        "is_resolved": False,
+                        "branch_info": None,
+                    }
+                )
+                logger.info(
+                    "unresolved base %s for %s: no candidates found",
+                    base_name,
+                    record["full_path"],
+                )
 
         delete_class_bases_by_class(conn, class_entity_id)
         upsert_class_bases(conn, class_entity_id, resolved_bases)
@@ -222,27 +276,37 @@ def resolve_all_inherits(
         for i, base_name in enumerate(parent_classes):
             entry = resolved_bases[i] if i < len(resolved_bases) else None
             if entry:
-                resolved_bases_meta.append({
-                    "name": base_name,
-                    "full_path": entry["base_full_path"] if entry["is_resolved"] else None,
-                    "entity_id": entry["base_entity_id"] if entry["is_resolved"] else None,
-                    "is_resolved": entry["is_resolved"],
-                })
+                resolved_bases_meta.append(
+                    {
+                        "name": base_name,
+                        "full_path": entry["base_full_path"]
+                        if entry["is_resolved"]
+                        else None,
+                        "entity_id": entry["base_entity_id"]
+                        if entry["is_resolved"]
+                        else None,
+                        "is_resolved": entry["is_resolved"],
+                    }
+                )
             else:
-                resolved_bases_meta.append({
-                    "name": base_name,
-                    "full_path": None,
-                    "entity_id": None,
-                    "is_resolved": False,
-                })
+                resolved_bases_meta.append(
+                    {
+                        "name": base_name,
+                        "full_path": None,
+                        "entity_id": None,
+                        "is_resolved": False,
+                    }
+                )
         meta["resolved_bases"] = resolved_bases_meta
         record["metadata_json"] = json.dumps(meta, default=str)
+
 
 def clean_inherited_member_entities(conn: sqlite3.Connection) -> None:
     """Delete all INHERITED_MEMBER synthetic entities from the database."""
     conn.execute(
         "DELETE FROM entities WHERE json_extract(metadata_json, '$.inherited') = 1"
     )
+
 
 def _create_inherited_base_aliases(
     conn: sqlite3.Connection,
@@ -264,10 +328,8 @@ def _create_inherited_base_aliases(
 
         # Collect names that class directly defines (these are shadowed)
         own_meta = {}
-        try:
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
             own_meta = json.loads(record["metadata_json"])
-        except (json.JSONDecodeError, TypeError):
-            pass
 
         own_member_ids = set()
         own_member_ids.update(own_meta.get("method_ids", []))
@@ -286,7 +348,9 @@ def _create_inherited_base_aliases(
 
         for mro_idx, source_fqn in enumerate(mro[1:], 1):
             source_entities = get_entities_by_path(conn, source_fqn)
-            source_class = next((e for e in source_entities if e["type"] == "CLASS"), None)
+            source_class = next(
+                (e for e in source_entities if e["type"] == "CLASS"), None
+            )
             if not source_class:
                 continue
 
@@ -301,7 +365,11 @@ def _create_inherited_base_aliases(
                 if not member:
                     continue
                 member_name = member.get("name", "")
-                if not member_name or member_name in direct_own_names or member_name in seen_member_names:
+                if (
+                    not member_name
+                    or member_name in direct_own_names
+                    or member_name in seen_member_names
+                ):
                     continue
                 seen_member_names.add(member_name)
                 syn = _create_synthetic_entity(
@@ -315,7 +383,11 @@ def _create_inherited_base_aliases(
                 if not member:
                     continue
                 member_name = member.get("name", "")
-                if not member_name or member_name in direct_own_names or member_name in seen_member_names:
+                if (
+                    not member_name
+                    or member_name in direct_own_names
+                    or member_name in seen_member_names
+                ):
                     continue
                 seen_member_names.add(member_name)
                 syn = _create_synthetic_entity(
@@ -329,7 +401,11 @@ def _create_inherited_base_aliases(
                 if not inner:
                     continue
                 member_name = inner.get("name", "")
-                if not member_name or member_name in direct_own_names or member_name in seen_member_names:
+                if (
+                    not member_name
+                    or member_name in direct_own_names
+                    or member_name in seen_member_names
+                ):
                     continue
                 seen_member_names.add(member_name)
                 syn = _create_synthetic_entity(
@@ -339,6 +415,7 @@ def _create_inherited_base_aliases(
                     created.append(syn)
 
     return created
+
 
 def _create_synthetic_entity(
     class_fqn: str,
@@ -375,6 +452,7 @@ def _create_synthetic_entity(
     upsert_entity(conn, **syn_record)
     return syn_record
 
+
 def _create_inherited_inner_class_aliases(
     conn: sqlite3.Connection,
     records: list[dict],
@@ -394,10 +472,8 @@ def _create_inherited_inner_class_aliases(
             continue
 
         own_meta = {}
-        try:
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
             own_meta = json.loads(record["metadata_json"])
-        except (json.JSONDecodeError, TypeError):
-            pass
 
         own_inner_type_ids = own_meta.get("inner_type_ids", [])
 
@@ -405,7 +481,9 @@ def _create_inherited_inner_class_aliases(
 
         for mro_idx, source_fqn in enumerate(mro[1:], 1):
             source_entities = get_entities_by_path(conn, source_fqn)
-            source_class = next((e for e in source_entities if e["type"] == "CLASS"), None)
+            source_class = next(
+                (e for e in source_entities if e["type"] == "CLASS"), None
+            )
             if not source_class:
                 continue
 
@@ -428,7 +506,9 @@ def _create_inherited_inner_class_aliases(
                 inner_class_fqn = inner["full_path"]
 
                 inner_entities = get_entities_by_path(conn, inner_class_fqn)
-                inner_class = next((e for e in inner_entities if e["type"] == "CLASS"), None)
+                inner_class = next(
+                    (e for e in inner_entities if e["type"] == "CLASS"), None
+                )
                 if not inner_class:
                     continue
 
@@ -465,6 +545,7 @@ def _create_inherited_inner_class_aliases(
 
     return created
 
+
 def eager_resolve_all_inherited_members(
     conn: sqlite3.Connection,
     records: list[dict] | None = None,
@@ -473,12 +554,11 @@ def eager_resolve_all_inherited_members(
     """Clean all inherited members and recreate them via Pass 1 (direct MRO) and Pass 2 (inner class MRO)."""
     if not branch:
         import os
+
         branch = os.environ.get("DEPUTY_BRANCH", "default")
 
     if records is None:
-        rows = conn.execute(
-            "SELECT * FROM entities WHERE type = 'CLASS'"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM entities WHERE type = 'CLASS'").fetchall()
         records = [dict(r) for r in rows]
 
     clean_inherited_member_entities(conn)
@@ -492,8 +572,10 @@ def eager_resolve_all_inherited_members(
     all_ids = [s["id"] for s in pass1 + pass2]
     if all_ids:
         from deputy.database.sqlite import upsert_branch_entities
+
         upsert_branch_entities(conn, branch, all_ids)
         conn.commit()
+
 
 def compute_class_mro(
     conn: sqlite3.Connection,
@@ -522,11 +604,9 @@ def compute_class_mro(
     _visiting.add(class_entity_id)
 
     meta = {}
-    try:
+    with contextlib.suppress(json.JSONDecodeError, TypeError):
         meta = json.loads(entity["metadata_json"])
-    except (json.JSONDecodeError, TypeError):
-        pass
-    
+
     parent_classes = meta.get("parent_classes", [])
     if not parent_classes:
         result = [entity["full_path"]]
@@ -546,10 +626,18 @@ def compute_class_mro(
             base_entity_id = base["base_entity_id"]
         else:
             base_name = base["base_full_path"]
-            pin = get_inheritance_pin(conn, class_entity_id, base_name, branch) if branch else None
+            pin = (
+                get_inheritance_pin(conn, class_entity_id, base_name, branch)
+                if branch
+                else None
+            )
             if pin:
                 pinned_entity = get_entity_by_id(conn, pin["pinned_entity_id"])
-                pinned_fqn = pinned_entity["full_path"] if pinned_entity else base["base_full_path"]
+                pinned_fqn = (
+                    pinned_entity["full_path"]
+                    if pinned_entity
+                    else base["base_full_path"]
+                )
                 base_full_path = pinned_fqn
                 base_entity_id = pin["pinned_entity_id"]
             else:
@@ -559,7 +647,9 @@ def compute_class_mro(
         if base_mro is None:
             break
 
-        resolved_prefix.append({"base_full_path": base_full_path, "base_entity_id": base_entity_id})
+        resolved_prefix.append(
+            {"base_full_path": base_full_path, "base_entity_id": base_entity_id}
+        )
         base_mros.append(base_mro)
 
     if not resolved_prefix:
@@ -568,8 +658,10 @@ def compute_class_mro(
         _visiting.discard(class_entity_id)
         return result
 
-    base_mro_dict = {b["base_full_path"]: base_mros[i] for i, b in enumerate(resolved_prefix)}
-    base_fqns = [b["base_full_path"] for b in resolved_prefix]
+    base_mro_dict: dict[str, list[str] | None] = {
+        str(b["base_full_path"]): base_mros[i] for i, b in enumerate(resolved_prefix)
+    }
+    base_fqns = [str(b["base_full_path"]) for b in resolved_prefix]
 
     result = compute_mro_from_bases(entity["full_path"], base_mro_dict, base_fqns)
     if result is None:
@@ -578,6 +670,7 @@ def compute_class_mro(
     memo[class_entity_id] = result
     _visiting.discard(class_entity_id)
     return result
+
 
 def get_inherited_members(
     conn: sqlite3.Connection,
@@ -643,6 +736,7 @@ def get_inherited_members(
 
     return inherited
 
+
 def get_class_inheritance_info(
     conn: sqlite3.Connection,
     class_entity_id: str,
@@ -655,22 +749,24 @@ def get_class_inheritance_info(
     unresolved = []
     for base in direct_bases:
         if base.get("is_resolved"):
-            resolved.append({
-                "base_full_path": base["base_full_path"],
-                "base_entity_id": base["base_entity_id"],
-            })
+            resolved.append(
+                {
+                    "base_full_path": base["base_full_path"],
+                    "base_entity_id": base["base_entity_id"],
+                }
+            )
         else:
             candidates = []
             bi = base.get("branch_info")
             if bi:
-                try:
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
                     candidates = json.loads(bi)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            unresolved.append({
-                "base_full_path": base["base_full_path"],
-                "candidates": candidates,
-            })
+            unresolved.append(
+                {
+                    "base_full_path": base["base_full_path"],
+                    "candidates": candidates,
+                }
+            )
 
     inherited_members = get_inherited_members(conn, class_entity_id, mro)
 
@@ -680,6 +776,7 @@ def get_class_inheritance_info(
         "unresolved_bases": unresolved,
         "inherited_members": inherited_members,
     }
+
 
 def resolve_entity_through_mro(
     conn: sqlite3.Connection,
