@@ -125,6 +125,7 @@ class TestEntityRecord:
         entity.name = "ExportedClass"
         entity.fqn = "pkg.mod.ExportedClass"
         entity.type = "CLASS"
+        entity.signature = None
 
         module_exports = {"pkg.mod": {"ExportedClass"}}
         record = _entity_record(entity, self._registry([]), module_exports)
