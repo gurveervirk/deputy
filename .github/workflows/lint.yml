@@ -1,4 +1,4 @@
-name: pytests
+name: lint
 
 on:
   push:
@@ -7,12 +7,8 @@ on:
     branches: [ "main", "master" ]
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: [ "3.12", "3.13" ]
 
     steps:
     - name: Checkout deputy
@@ -28,16 +24,16 @@ jobs:
         cache-dependency-glob: "uv.lock"
 
     - name: Set up Python
-      run: uv python install ${{ matrix.python-version }}
+      run: uv python install
 
     - name: Install dependencies
-      run: uv sync --python ${{ matrix.python-version }}
+      run: uv sync
 
-    - name: Run pytest with coverage
-      run: uv run pytest --cov --cov-report=xml
+    - name: Run ruff check
+      run: uv run ruff check .
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
-      with:
-        files: coverage.xml
-        token: ${{ secrets.CODECOV_TOKEN }}
+    - name: Run ruff format check
+      run: uv run ruff format --check .
+
+    - name: Run basedpyright
+      run: uv run basedpyright

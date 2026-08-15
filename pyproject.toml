@@ -38,7 +38,10 @@ Documentation = "https://gurveervirk.github.io/deputy/"
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.39.10",
     "pytest>=8.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.3",
     "zensical>=0.0.52",
 ]
 
@@ -52,6 +55,27 @@ packages = ["src/deputy"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = [".venv", ".cache", "site", ".deputy"]
+
+[tool.ruff.lint]
+ignore = ["E501"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/deputy/__init__.py" = ["B008"]
+
+[tool.basedpyright]
+include = ["src"]
+exclude = ["**/tests", "**/.venv", "**/.cache", "**/site"]
+extraPaths = ["src", "../deproc/deproc-core", "../deproc/deproc-python", "../deproc/deproc-java", "../deproc/deproc-utils-tree-sitter", "../deproc/deproc-utils-python-env"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
 
 [tool.uv.sources]
 deproc-core = { path = "../deproc/deproc-core", editable = true }
