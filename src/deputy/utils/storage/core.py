@@ -1,11 +1,15 @@
-from deproc.core.context import Context
-from deproc.core.discovery import find_source_files
-from .models import FileMetadata
-from deputy.logger import get_logger
 import hashlib
 import os
 
+from deproc.core.context import Context
+from deproc.core.discovery import find_source_files
+
+from deputy.logger import get_logger
+
+from .models import FileMetadata
+
 logger = get_logger("utils.storage")
+
 
 def compute_sha256(filepath: str) -> str:
     hasher = hashlib.sha256()
@@ -16,6 +20,7 @@ def compute_sha256(filepath: str) -> str:
                 break
             hasher.update(block)
     return hasher.hexdigest()
+
 
 def get_source_files(context: Context) -> list[FileMetadata]:
     results: list[FileMetadata] = []

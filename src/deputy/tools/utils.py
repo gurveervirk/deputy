@@ -1,22 +1,24 @@
-import os
 import json
+import os
 import sqlite3
 from dataclasses import dataclass, field
+
 from deproc.core.context import Context
 from deproc.core.runtime import EntityRegistry
 from deproc.plugins.python.utils.exports import build_module_exports
 from deproc.plugins.python.utils.imports import resolve_relative_import_path
+from rich.tree import Tree
+
+from deputy.core import create_context
 from deputy.database.sqlite import (
-    open_database,
     get_branch_files,
-    get_entity_ids_by_fqn,
     get_entity_by_id,
+    get_entity_ids_by_fqn,
+    open_database,
 )
 from deputy.logger import get_logger
 from deputy.utils.config_file import read_config
 from deputy.utils.storage import compute_sha256, get_source_files
-from deputy.core import create_context
-from rich.tree import Tree
 
 logger = get_logger("tools.utils")
 
@@ -24,6 +26,7 @@ LANGUAGE_EXTENSIONS = {
     "python": (".py", ".pyi"),
     "java": (".java"),
 }
+
 
 def _language_for_path(path: str) -> str | None:
     lowered = path.lower()
@@ -33,12 +36,14 @@ def _language_for_path(path: str) -> str | None:
                 return lang
     return None
 
+
 def get_parent_id(entity: dict) -> str | None:
     pid = entity.get("parent_id")
     if pid:
         return pid
     meta = json.loads(entity["metadata_json"])
     return meta.get("parent_id")
+
 
 def get_containing_module_fqn(conn: sqlite3.Connection, entity_id: str) -> str | None:
     seen: set[str] = set()
@@ -48,10 +53,16 @@ def get_containing_module_fqn(conn: sqlite3.Connection, entity_id: str) -> str |
         entity = get_entity_by_id(conn, current_id)
         if not entity:
             return None
-        if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE", "COMPILATION_UNIT"):
+        if entity["type"] in (
+            "MODULE",
+            "PACKAGE",
+            "NAMESPACE_PACKAGE",
+            "COMPILATION_UNIT",
+        ):
             return entity["full_path"]
         current_id = get_parent_id(entity)
     return None
+
 
 def module_is_package(conn: sqlite3.Connection, module_fqn: str) -> bool:
     ids = get_entity_ids_by_fqn(conn, module_fqn)
@@ -61,7 +72,10 @@ def module_is_package(conn: sqlite3.Connection, module_fqn: str) -> bool:
             return True
     return False
 
-def resolve_relative_import(conn: sqlite3.Connection, import_stmt: dict, path: str) -> str | None:
+
+def resolve_relative_import(
+    conn: sqlite3.Connection, import_stmt: dict, path: str
+) -> str | None:
     parent_id = get_parent_id(import_stmt)
     module_fqn = get_containing_module_fqn(conn, parent_id) if parent_id else None
     if not module_fqn:
@@ -69,7 +83,10 @@ def resolve_relative_import(conn: sqlite3.Connection, import_stmt: dict, path: s
     is_package = module_is_package(conn, module_fqn)
     return resolve_relative_import_path(path, module_fqn, is_package)
 
-def resolve_import_alias(conn: sqlite3.Connection, alias: dict) -> tuple[str | None, str | None]:
+
+def resolve_import_alias(
+    conn: sqlite3.Connection, alias: dict
+) -> tuple[str | None, str | None]:
     meta = json.loads(alias["metadata_json"])
     parent_id = get_parent_id(alias)
     import_name = meta.get("original_name", alias["name"])
@@ -87,7 +104,9 @@ def resolve_import_alias(conn: sqlite3.Connection, alias: dict) -> tuple[str | N
         return None, None
     return target_module, import_name
 
+
 _DEFAULT_DB = ".deputy.db"
+
 
 def _resolve_db_path() -> str:
     cfg = read_config()
@@ -96,12 +115,12 @@ def _resolve_db_path() -> str:
         return db_path
     if os.path.exists(_DEFAULT_DB):
         return _DEFAULT_DB
-    raise FileNotFoundError(
-        "No database found. Run 'deputy init' first."
-    )
+    raise FileNotFoundError("No database found. Run 'deputy init' first.")
+
 
 def _open_database() -> sqlite3.Connection:
     return open_database(_resolve_db_path())
+
 
 def _detect_file_changes(
     files: list,
@@ -125,11 +144,12 @@ def _detect_file_changes(
         else:
             logger.debug("file mtime-only: %s", fmeta.path)
             mtime_only.add(fmeta.path)
-    
+
     deleted = set(tracked.keys()) - {f.path for f in files}
     if deleted:
         logger.debug("files deleted: %s", ", ".join(sorted(deleted)))
     return file_hashes, changed, mtime_only, deleted
+
 
 def _process_files(
     ctx,
@@ -153,7 +173,11 @@ def _process_files(
         parser = ctx.get_parser(lang)
         linker = ctx.get_linker(lang)
         if parser is None or linker is None:
-            logger.warning("no %s parser/linker registered, skipping %d files", lang, len(lang_files))
+            logger.warning(
+                "no %s parser/linker registered, skipping %d files",
+                lang,
+                len(lang_files),
+            )
             continue
 
         lang_ctx = Context(copy_from=ctx)
@@ -179,12 +203,19 @@ def _process_files(
             file_path = getattr(entity, "path", None)
             if file_path and file_path.endswith(".pyi"):
                 kwargs["is_stub"] = True
-            record = _entity_record(entity, lang_ctx.entity_registry, module_exports, language=lang, **kwargs)
+            record = _entity_record(
+                entity,
+                lang_ctx.entity_registry,
+                module_exports,
+                language=lang,
+                **kwargs,
+            )
             if record:
                 records.append(record)
 
     logger.debug("processed %d records from %d files", len(records), len(files))
     return records, relpath_to_fqn
+
 
 def _is_stale(conn, branch, base_path):
     ctx = create_context(base_path, conn)
@@ -201,7 +232,11 @@ def _is_stale(conn, branch, base_path):
     if current_paths != tracked_paths:
         added = current_paths - tracked_paths
         removed = tracked_paths - current_paths
-        logger.debug("stale check: files changed (added=%d, removed=%d)", len(added), len(removed))
+        logger.debug(
+            "stale check: files changed (added=%d, removed=%d)",
+            len(added),
+            len(removed),
+        )
         return True
 
     for fmeta in files:
@@ -213,11 +248,13 @@ def _is_stale(conn, branch, base_path):
     logger.debug("stale check: up to date")
     return False
 
+
 @dataclass
 class _EntityTreeNode:
     label: str | None = None
     entities: list[str] = field(default_factory=list)
     children: dict[str, "_EntityTreeNode"] = field(default_factory=dict)
+
 
 def build_entity_tree(results: list[dict], show_fqn: bool = False) -> Tree:
     root = _EntityTreeNode()
@@ -252,6 +289,7 @@ def build_entity_tree(results: list[dict], show_fqn: bool = False) -> Tree:
     _add_tree_node(tree, root)
     return tree
 
+
 def _add_tree_node(parent: Tree, node: _EntityTreeNode) -> None:
     for label in node.entities:
         parent.add(label)
@@ -260,25 +298,34 @@ def _add_tree_node(parent: Tree, node: _EntityTreeNode) -> None:
         branch = parent.add(branch_label)
         _add_tree_node(branch, child)
 
-def _entity_record(entity, registry, module_exports, source="project", package_name=None, is_stub=False, language="python") -> dict | None:
+
+def _entity_record(
+    entity,
+    registry,
+    module_exports,
+    source="project",
+    package_name=None,
+    is_stub=False,
+    language="python",
+) -> dict | None:
     if language == "java":
         from deproc.plugins.java.utils.serialization import entity_to_record
     else:
         from deproc.plugins.python.utils.serialization import entity_to_record
-    
+
     record = entity_to_record(entity, module_exports=module_exports, registry=registry)
 
     if record is None or source == "project":
         return record
-    
+
     meta = json.loads(record["metadata_json"])
     meta["source"] = source
 
     if package_name:
         meta["package_name"] = package_name
-    
+
     if is_stub:
         meta["is_stub"] = True
-    
+
     record["metadata_json"] = json.dumps(meta, default=str)
     return record

@@ -1,9 +1,11 @@
 import re
 import sqlite3
 from pathlib import Path
+
 from deputy.logger import get_logger
 
 logger = get_logger("database.sqlite")
+
 
 def open_database(db_path: str) -> sqlite3.Connection:
     logger.debug("opening database: %s", db_path)
@@ -14,12 +16,15 @@ def open_database(db_path: str) -> sqlite3.Connection:
     conn.create_function("REGEXP", 2, _regexp)
     return conn
 
+
 def _regexp(pattern: str, value: str) -> bool:
     return re.search(pattern, value) is not None
+
 
 def init_schema(conn: sqlite3.Connection) -> None:
     schema_path = Path(__file__).parent / "schema.sql"
     conn.executescript(schema_path.read_text())
+
 
 def get_branch_files(
     conn: sqlite3.Connection, branch_name: str
@@ -28,7 +33,10 @@ def get_branch_files(
         "SELECT filepath, content_hash, last_modified FROM branch_files WHERE branch_name = ?",
         (branch_name,),
     ).fetchall()
-    return {row["filepath"]: (row["content_hash"], row["last_modified"]) for row in rows}
+    return {
+        row["filepath"]: (row["content_hash"], row["last_modified"]) for row in rows
+    }
+
 
 def content_hash_exists(conn: sqlite3.Connection, content_hash: str) -> bool:
     row = conn.execute(
@@ -36,6 +44,7 @@ def content_hash_exists(conn: sqlite3.Connection, content_hash: str) -> bool:
         (content_hash,),
     ).fetchone()
     return row is not None
+
 
 def upsert_branch_file(
     conn: sqlite3.Connection,
@@ -50,6 +59,7 @@ def upsert_branch_file(
         (branch_name, filepath, content_hash, last_modified),
     )
 
+
 def delete_branch_file(
     conn: sqlite3.Connection,
     branch_name: str,
@@ -59,6 +69,7 @@ def delete_branch_file(
         "DELETE FROM branch_files WHERE branch_name = ? AND filepath = ?",
         (branch_name, filepath),
     )
+
 
 def update_mtime(
     conn: sqlite3.Connection,
@@ -70,6 +81,7 @@ def update_mtime(
         "UPDATE branch_files SET last_modified = ? WHERE branch_name = ? AND filepath = ?",
         (last_modified, branch_name, filepath),
     )
+
 
 def upsert_entity(
     conn: sqlite3.Connection,
@@ -87,11 +99,13 @@ def upsert_entity(
         (id, language, full_path, name, type, metadata_json, parent_id),
     )
 
+
 def delete_entity_by_module_fqn(conn: sqlite3.Connection, module_fqn: str) -> None:
     conn.execute(
         "DELETE FROM entities WHERE full_path = ? OR full_path LIKE ?",
         (module_fqn, f"{module_fqn}.%"),
     )
+
 
 def search_entities(
     conn: sqlite3.Connection,
@@ -122,7 +136,9 @@ def search_entities(
         parts.append(f"({col}full_path REGEXP ? OR {col}name REGEXP ?)")
         params.extend([pattern, pattern])
 
-    parts.append(f"{col}type NOT IN ('IMPORT_STATEMENT', 'IMPORT', 'CONTROL_FLOW_BLOCK', 'CONTROL_FLOW_GROUP')")
+    parts.append(
+        f"{col}type NOT IN ('IMPORT_STATEMENT', 'IMPORT', 'CONTROL_FLOW_BLOCK', 'CONTROL_FLOW_GROUP')"
+    )
 
     if type_filter:
         placeholders = ",".join("?" for _ in type_filter)
@@ -154,11 +170,13 @@ def search_entities(
     rows = conn.execute(sql, params).fetchall()
     return [dict(row) for row in rows]
 
+
 def set_config(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.execute(
         "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
         (key, value),
     )
+
 
 def get_config(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute(
@@ -167,18 +185,16 @@ def get_config(conn: sqlite3.Connection, key: str) -> str | None:
     ).fetchone()
     return row["value"] if row else None
 
-def get_entity_ids_by_fqn(
-    conn: sqlite3.Connection, fqn: str
-) -> set[str]:
+
+def get_entity_ids_by_fqn(conn: sqlite3.Connection, fqn: str) -> set[str]:
     rows = conn.execute(
         "SELECT id FROM entities WHERE full_path = ?",
         (fqn,),
     ).fetchall()
     return {row["id"] for row in rows}
 
-def get_entity_by_id(
-    conn: sqlite3.Connection, entity_id: str
-) -> dict | None:
+
+def get_entity_by_id(conn: sqlite3.Connection, entity_id: str) -> dict | None:
     row = conn.execute(
         "SELECT * FROM entities WHERE id = ?",
         (entity_id,),
@@ -187,9 +203,8 @@ def get_entity_by_id(
         return None
     return dict(row)
 
-def get_entities_by_ids(
-    conn: sqlite3.Connection, entity_ids: set[str]
-) -> list[dict]:
+
+def get_entities_by_ids(conn: sqlite3.Connection, entity_ids: set[str]) -> list[dict]:
     if not entity_ids:
         return []
     placeholders = ",".join("?" for _ in entity_ids)
@@ -198,6 +213,7 @@ def get_entities_by_ids(
         tuple(entity_ids),
     ).fetchall()
     return [dict(row) for row in rows]
+
 
 def get_entities_by_path(
     conn: sqlite3.Connection, full_path: str, branch_name: str | None = None
@@ -216,6 +232,7 @@ def get_entities_by_path(
             (full_path,),
         ).fetchall()
     return [dict(row) for row in rows]
+
 
 def get_entity_by_path(
     conn: sqlite3.Connection, full_path: str, branch_name: str | None = None
@@ -236,6 +253,7 @@ def get_entity_by_path(
     if row is None:
         return None
     return dict(row)
+
 
 def get_filtered_entities_by_path(
     conn: sqlite3.Connection,
@@ -262,11 +280,13 @@ def get_filtered_entities_by_path(
     rows = conn.execute(sql, params).fetchall()
     return [dict(row) for row in rows]
 
+
 def delete_entities_by_package(conn: sqlite3.Connection, package_name: str) -> None:
     conn.execute(
         "DELETE FROM entities WHERE json_extract(metadata_json, '$.source') = 'dependency' AND json_extract(metadata_json, '$.package_name') = ?",
         (package_name,),
     )
+
 
 def upsert_dependency(
     conn: sqlite3.Connection,
@@ -281,8 +301,17 @@ def upsert_dependency(
     conn.execute(
         """INSERT OR REPLACE INTO dependencies (package_name, version, install_path, package_path, source, metadata_json, last_modified)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (package_name, version, install_path, package_path, source, metadata_json, last_modified),
+        (
+            package_name,
+            version,
+            install_path,
+            package_path,
+            source,
+            metadata_json,
+            last_modified,
+        ),
     )
+
 
 def get_dependency(conn: sqlite3.Connection, package_name: str) -> dict | None:
     row = conn.execute(
@@ -293,17 +322,22 @@ def get_dependency(conn: sqlite3.Connection, package_name: str) -> dict | None:
         return None
     return dict(row)
 
+
 def delete_dependency(conn: sqlite3.Connection, package_name: str) -> None:
     conn.execute(
         "DELETE FROM dependencies WHERE package_name = ?",
         (package_name,),
     )
 
+
 def list_dependencies(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM dependencies ORDER BY package_name").fetchall()
     return [dict(row) for row in rows]
 
-def upsert_branch_entities(conn: sqlite3.Connection, branch_name: str, entity_ids: list[str]) -> None:
+
+def upsert_branch_entities(
+    conn: sqlite3.Connection, branch_name: str, entity_ids: list[str]
+) -> None:
     if not entity_ids:
         return
     conn.executemany(
@@ -311,7 +345,10 @@ def upsert_branch_entities(conn: sqlite3.Connection, branch_name: str, entity_id
         [(branch_name, eid) for eid in entity_ids],
     )
 
-def get_dependency_entity_ids(conn: sqlite3.Connection, branch_name: str, package_name: str) -> list[str]:
+
+def get_dependency_entity_ids(
+    conn: sqlite3.Connection, branch_name: str, package_name: str
+) -> list[str]:
     rows = conn.execute(
         """SELECT be.entity_id FROM branch_entities be
            JOIN entities e ON be.entity_id = e.id
@@ -322,10 +359,14 @@ def get_dependency_entity_ids(conn: sqlite3.Connection, branch_name: str, packag
     ).fetchall()
     return [r["entity_id"] for r in rows]
 
+
 def delete_branch_entities(conn: sqlite3.Connection, branch_name: str) -> None:
     conn.execute("DELETE FROM branch_entities WHERE branch_name = ?", (branch_name,))
 
-def delete_branch_entities_by_entity_ids(conn: sqlite3.Connection, branch_name: str, entity_ids: list[str]) -> None:
+
+def delete_branch_entities_by_entity_ids(
+    conn: sqlite3.Connection, branch_name: str, entity_ids: list[str]
+) -> None:
     if not entity_ids:
         return
     placeholders = ",".join("?" for _ in entity_ids)
@@ -333,6 +374,7 @@ def delete_branch_entities_by_entity_ids(conn: sqlite3.Connection, branch_name: 
         f"DELETE FROM branch_entities WHERE branch_name = ? AND entity_id IN ({placeholders})",
         (branch_name, *entity_ids),
     )
+
 
 def upsert_class_bases(
     conn: sqlite3.Connection,
@@ -353,20 +395,21 @@ def upsert_class_bases(
             ),
         )
 
+
 def delete_class_bases_by_class(conn: sqlite3.Connection, class_entity_id: str) -> None:
     conn.execute(
         "DELETE FROM class_bases WHERE class_entity_id = ?",
         (class_entity_id,),
     )
 
-def get_direct_bases(
-    conn: sqlite3.Connection, class_entity_id: str
-) -> list[dict]:
+
+def get_direct_bases(conn: sqlite3.Connection, class_entity_id: str) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM class_bases WHERE class_entity_id = ? ORDER BY rowid",
         (class_entity_id,),
     ).fetchall()
     return [dict(row) for row in rows]
+
 
 def get_direct_subclasses(
     conn: sqlite3.Connection, base_full_path: str, branch_name: str | None = None
@@ -388,6 +431,7 @@ def get_direct_subclasses(
         ).fetchall()
     return [dict(row) for row in rows]
 
+
 def get_transitive_subclasses(
     conn: sqlite3.Connection, base_full_path: str, branch_name: str | None = None
 ) -> list[dict]:
@@ -404,6 +448,7 @@ def get_transitive_subclasses(
                 todo.append(sub["full_path"])
     return results
 
+
 def upsert_inheritance_pin(
     conn: sqlite3.Connection,
     class_entity_id: str,
@@ -417,6 +462,7 @@ def upsert_inheritance_pin(
            VALUES (?, ?, ?, ?)""",
         (class_entity_id, base_name, pinned_entity_id, branch_name),
     )
+
 
 def get_inheritance_pin(
     conn: sqlite3.Connection,
@@ -432,6 +478,7 @@ def get_inheritance_pin(
         return None
     return dict(row)
 
+
 def delete_inheritance_pin(
     conn: sqlite3.Connection,
     class_entity_id: str,
@@ -443,9 +490,8 @@ def delete_inheritance_pin(
         (class_entity_id, base_name, branch_name),
     )
 
-def list_inheritance_pins(
-    conn: sqlite3.Connection, branch_name: str
-) -> list[dict]:
+
+def list_inheritance_pins(conn: sqlite3.Connection, branch_name: str) -> list[dict]:
     rows = conn.execute(
         """SELECT ip.*, e.full_path AS class_full_path, e.name AS class_name
            FROM inheritance_pins ip
@@ -456,5 +502,8 @@ def list_inheritance_pins(
     ).fetchall()
     return [dict(row) for row in rows]
 
+
 def clean_orphan_entities(conn: sqlite3.Connection) -> None:
-    conn.execute("DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM branch_entities)")
+    conn.execute(
+        "DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM branch_entities)"
+    )

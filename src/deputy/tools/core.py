@@ -1,7 +1,15 @@
-import os
 import json
+import os
+
+from deproc.utils.python_env import (
+    detect_venv,
+    find_site_packages,
+    list_installed_packages,
+)
 from rich.console import Console
+
 from deputy._version import __version__
+from deputy.core import create_context
 from deputy.database.sqlite import (
     clean_orphan_entities,
     delete_branch_entities,
@@ -11,47 +19,44 @@ from deputy.database.sqlite import (
     get_branch_files,
     get_config,
     get_dependency,
+    get_dependency_entity_ids,
     get_entities_by_path,
+    get_entity_by_id,
     get_entity_by_path,
     get_filtered_entities_by_path,
-    get_dependency_entity_ids,
-    get_entity_by_id,
     init_schema,
     list_dependencies,
     open_database,
-    search_entities as db_search_entities,
     set_config,
     update_mtime,
     upsert_branch_entities,
     upsert_branch_file,
     upsert_entity,
 )
+from deputy.database.sqlite import (
+    search_entities as db_search_entities,
+)
 from deputy.logger import get_logger
-from deputy.utils.config_file import write_config, read_config
-from deputy.utils.git import get_current_branch
-from deputy.utils.storage import get_source_files
-from deputy.core import create_context
+from deputy.tools.inheritance import (
+    eager_resolve_all_inherited_members,
+    get_class_inheritance_info,
+    resolve_all_inherits,
+    resolve_entity_through_mro,
+)
 from deputy.tools.utils import (
     _detect_file_changes,
     _is_stale,
     _open_database,
     _process_files,
 )
-from deputy.tools.inheritance import (
-    resolve_all_inherits,
-    get_class_inheritance_info,
-    resolve_entity_through_mro,
-    eager_resolve_all_inherited_members,
-)
-from deproc.utils.python_env import (
-    detect_venv,
-    find_site_packages, 
-    list_installed_packages
-)
+from deputy.utils.config_file import read_config, write_config
+from deputy.utils.git import get_current_branch
+from deputy.utils.storage import get_source_files
 from deputy.venv import process_dependency
 
 logger = get_logger("tools.core")
 console = Console()
+
 
 def init_database(path: str) -> None:
     conn = open_database(path)
@@ -66,6 +71,7 @@ def init_database(path: str) -> None:
     venv_path = detect_venv(os.getcwd())
     if venv_path:
         write_config("venv_path", venv_path)
+
 
 def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     conn = _open_database()
@@ -82,12 +88,25 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     files = get_source_files(ctx)
     tracked = get_branch_files(conn, branch)
 
-    logger.info("sync started — branch=%s, base=%s, files=%d, force=%s", branch, base_path, len(files), force)
+    logger.info(
+        "sync started — branch=%s, base=%s, files=%d, force=%s",
+        branch,
+        base_path,
+        len(files),
+        force,
+    )
     logger.debug("tracked files: %d", len(tracked))
 
-    file_hashes, changed, mtime_only, deleted = _detect_file_changes(files, tracked, base_path, force)
+    file_hashes, changed, mtime_only, deleted = _detect_file_changes(
+        files, tracked, base_path, force
+    )
 
-    logger.debug("changes — new/modified=%d, mtime_only=%d, deleted=%d", len(changed), len(mtime_only), len(deleted))
+    logger.debug(
+        "changes — new/modified=%d, mtime_only=%d, deleted=%d",
+        len(changed),
+        len(mtime_only),
+        len(deleted),
+    )
 
     dep_ids = _sync_deps_if_needed(conn, ctx, base_path, sync_deps, force, branch)
 
@@ -130,13 +149,22 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
 
     for fmeta in files:
         if fmeta.path in file_hashes:
-            upsert_branch_file(conn, branch, fmeta.path, file_hashes[fmeta.path], fmeta.mtime)
+            upsert_branch_file(
+                conn, branch, fmeta.path, file_hashes[fmeta.path], fmeta.mtime
+            )
 
     conn.commit()
     conn.close()
-    logger.info("sync complete — %d entities upserted, %d files processed", len(records), len(changed))
+    logger.info(
+        "sync complete — %d entities upserted, %d files processed",
+        len(records),
+        len(changed),
+    )
 
-def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force, branch) -> list[str]:
+
+def _sync_deps_if_needed(
+    conn, ctx, base_path, sync_deps_override, force, branch
+) -> list[str]:
     if sync_deps_override is None:
         sync_deps = get_config(conn, "sync_deps") == "true"
     else:
@@ -160,13 +188,20 @@ def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force, branch
 
     max_files = int(file_config.get("max_dep_files", "5000"))
     packages = list_installed_packages(site_packages)
-    logger.info("dependency sync — %d packages found in %s", len(packages), site_packages)
+    logger.info(
+        "dependency sync — %d packages found in %s", len(packages), site_packages
+    )
     tracked_deps = {p["package_name"] for p in list_dependencies(conn)}
     current_names = set()
     all_ids: list[str] = []
     for pkg in packages:
         current_names.add(pkg.name)
-        logger.debug("processing dependency: %s@%s (%d modules)", pkg.name, pkg.version, len(pkg.top_level_modules))
+        logger.debug(
+            "processing dependency: %s@%s (%d modules)",
+            pkg.name,
+            pkg.version,
+            len(pkg.top_level_modules),
+        )
         tracked = get_dependency(conn, pkg.name)
         if (
             tracked
@@ -194,6 +229,7 @@ def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override, force, branch
     logger.info("dependency sync complete — %d packages synced", len(packages))
     return all_ids
 
+
 def search_entities(
     pattern: str,
     type_filter: list[str] | None = None,
@@ -215,17 +251,25 @@ def search_entities(
                 console.print("[dim]auto_sync: project changed, running sync...[/dim]")
                 run_sync(force=False)
         except Exception:
-            logger.warning("auto_sync check failed, proceeding with existing data", exc_info=True)
+            logger.warning(
+                "auto_sync check failed, proceeding with existing data", exc_info=True
+            )
 
     results = db_search_entities(
-        conn, pattern, branch_name=branch,
-        type_filter=type_filter, language=language,
-        limit=limit, offset=offset,
-        exact=exact, name_only=name_only,
+        conn,
+        pattern,
+        branch_name=branch,
+        type_filter=type_filter,
+        language=language,
+        limit=limit,
+        offset=offset,
+        exact=exact,
+        name_only=name_only,
     )
     logger.debug("search for %q returned %d results", pattern, len(results))
     conn.close()
     return results
+
 
 def _compute_source(entity: dict, conn) -> str:
     meta = json.loads(entity["metadata_json"])
@@ -251,6 +295,7 @@ def _compute_source(entity: dict, conn) -> str:
                 return f"{path}:{lineno}"
     return ""
 
+
 def _get_source_file_path(entity: dict, conn, base_path: str) -> str | None:
     meta = json.loads(entity["metadata_json"])
     if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE", "COMPILATION_UNIT"):
@@ -259,16 +304,14 @@ def _get_source_file_path(entity: dict, conn, base_path: str) -> str | None:
         sid = meta.get("source_id")
         if sid:
             src = get_entity_by_id(conn, sid)
-            if src:
-                path = json.loads(src["metadata_json"]).get("path", "")
-            else:
-                path = ""
+            path = json.loads(src["metadata_json"]).get("path", "") if src else ""
         else:
             path = ""
     if not path:
         return None
     full = os.path.join(base_path, path) if not os.path.isabs(path) else path
     return full if os.path.isfile(full) else None
+
 
 def _extract_source_text(entity: dict, conn, base_path: str) -> dict[str, str]:
     meta = json.loads(entity["metadata_json"])
@@ -278,7 +321,7 @@ def _extract_source_text(entity: dict, conn, base_path: str) -> dict[str, str]:
     try:
         with open(file_path) as f:
             lines = f.readlines()
-    except (FileNotFoundError, IOError):
+    except (OSError, FileNotFoundError):
         return {}
     result = {}
     for key in ("signature", "arguments", "return_type", "docstring"):
@@ -292,13 +335,14 @@ def _extract_source_text(entity: dict, conn, base_path: str) -> dict[str, str]:
                 result[key] = text
     return result
 
+
 def get_entity_info(
     full_path: str,
     all_matches: bool = False,
     type_filter: str | None = None,
     lineno: int | None = None,
     extract: bool = False,
-) -> dict | list[dict]:
+) -> dict | list[dict] | None:
     conn = _open_database()
     branch = get_current_branch()
 
@@ -311,10 +355,14 @@ def get_entity_info(
                 console.print("[dim]auto_sync: project changed, running sync...[/dim]")
                 run_sync(force=False)
         except Exception:
-            logger.warning("auto_sync check failed, proceeding with existing data", exc_info=True)
+            logger.warning(
+                "auto_sync check failed, proceeding with existing data", exc_info=True
+            )
 
     if type_filter or lineno is not None:
-        results = get_filtered_entities_by_path(conn, full_path, branch_name=branch, type_filter=type_filter, lineno=lineno)
+        results = get_filtered_entities_by_path(
+            conn, full_path, branch_name=branch, type_filter=type_filter, lineno=lineno
+        )
     else:
         results = get_entities_by_path(conn, full_path, branch_name=branch)
 
@@ -347,7 +395,9 @@ def get_entity_info(
                     target["_source"] = _compute_source(target, conn)
                     target["inherited_via_alias"] = row["full_path"]
                     if extract:
-                        target["_extracted"] = _extract_source_text(target, conn, base_path)
+                        target["_extracted"] = _extract_source_text(
+                            target, conn, base_path
+                        )
                     results[i] = target
                     continue
         row["_source"] = _compute_source(row, conn)
@@ -357,7 +407,11 @@ def get_entity_info(
             try:
                 row["_inheritance_info"] = get_class_inheritance_info(conn, row["id"])
             except Exception:
-                logger.debug("failed to compute inheritance info for %s", row["full_path"], exc_info=True)
+                logger.debug(
+                    "failed to compute inheritance info for %s",
+                    row["full_path"],
+                    exc_info=True,
+                )
 
     conn.close()
 

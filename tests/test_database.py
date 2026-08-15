@@ -1,35 +1,37 @@
 from unittest.mock import patch
+
 from deputy.database.sqlite import (
     clean_orphan_entities,
     delete_branch_entities,
+    delete_branch_file,
     delete_class_bases_by_class,
+    delete_entity_by_module_fqn,
     delete_inheritance_pin,
+    get_branch_files,
+    get_config,
     get_direct_bases,
     get_direct_subclasses,
+    get_entities_by_ids,
+    get_entities_by_path,
+    get_entity_by_id,
+    get_entity_by_path,
+    get_entity_ids_by_fqn,
+    get_filtered_entities_by_path,
     get_inheritance_pin,
     get_transitive_subclasses,
-    get_branch_files,
-    get_entities_by_path,
-    get_entity_by_path,
-    get_filtered_entities_by_path,
     list_inheritance_pins,
+    search_entities,
+    set_config,
+    update_mtime,
     upsert_branch_entities,
     upsert_branch_file,
     upsert_class_bases,
-    upsert_inheritance_pin,
-    delete_branch_file,
-    update_mtime,
     upsert_entity,
-    delete_entity_by_module_fqn,
-    get_entity_ids_by_fqn,
-    get_entity_by_id,
-    get_entities_by_ids,
-    search_entities,
-    set_config,
-    get_config,
+    upsert_inheritance_pin,
 )
 from deputy.tools.utils import _detect_file_changes
 from deputy.utils.storage.models import FileMetadata
+
 
 class TestBranchFiles:
     def test_upsert_and_get(self, db):
@@ -60,34 +62,84 @@ class TestBranchFiles:
         update_mtime(db, "main", "a.py", 99.0)
         assert get_branch_files(db, "main")["a.py"][1] == 99.0
 
+
 class TestEntities:
     def test_upsert_entity(self, db):
-        upsert_entity(db, id="e1", language="python", full_path="mod.f", name="f", type="FUNCTION",
-                      metadata_json='{"fqn":"mod.f"}')
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.f",
+            name="f",
+            type="FUNCTION",
+            metadata_json='{"fqn":"mod.f"}',
+        )
         row = get_entity_by_path(db, "mod.f")
         assert row["name"] == "f"
 
     def test_upsert_replaces(self, db):
-        upsert_entity(db, id="e1", language="python", full_path="mod.f", name="f", type="FUNCTION",
-                      metadata_json='{"fqn":"mod.f","a":1}')
-        upsert_entity(db, id="e1", language="python", full_path="mod.f", name="f", type="FUNCTION",
-                      metadata_json='{"fqn":"mod.f","a":2}')
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.f",
+            name="f",
+            type="FUNCTION",
+            metadata_json='{"fqn":"mod.f","a":1}',
+        )
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.f",
+            name="f",
+            type="FUNCTION",
+            metadata_json='{"fqn":"mod.f","a":2}',
+        )
         row = get_entity_by_id(db, "e1")
         assert row["metadata_json"] == '{"fqn":"mod.f","a":2}'
 
     def test_get_entities_by_path_multiple(self, db):
-        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json="{}")
-        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="CLASS",
-                      metadata_json="{}")
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json="{}",
+        )
+        upsert_entity(
+            db,
+            id="e2",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="CLASS",
+            metadata_json="{}",
+        )
         rows = get_entities_by_path(db, "mod.dup")
         assert len(rows) == 2
 
     def test_get_entity_by_path_returns_first(self, db):
-        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json="{}")
-        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="CLASS",
-                      metadata_json="{}")
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json="{}",
+        )
+        upsert_entity(
+            db,
+            id="e2",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="CLASS",
+            metadata_json="{}",
+        )
         row = get_entity_by_path(db, "mod.dup")
         assert row["id"] == "e1"
 
@@ -115,14 +167,36 @@ class TestEntities:
         assert get_entity_by_path(db, "pkg.mod.ClassA") is not None
 
     def test_get_entities_by_path_sorted_by_lineno(self, db):
-        upsert_entity(db, id="e3", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":30}')
-        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":10}')
-        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":20}')
+        upsert_entity(
+            db,
+            id="e3",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":30}',
+        )
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":10}',
+        )
+        upsert_entity(
+            db,
+            id="e2",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":20}',
+        )
         rows = get_entities_by_path(db, "mod.dup")
         assert [r["id"] for r in rows] == ["e1", "e2", "e3"]
+
 
 class TestConfig:
     def test_set_and_get(self, db):
@@ -138,6 +212,7 @@ class TestConfig:
         set_config(db, "key", "old")
         set_config(db, "key", "new")
         assert get_config(db, "key") == "new"
+
 
 class TestBranchEntities:
     def test_upsert_and_delete(self, db):
@@ -185,33 +260,85 @@ class TestBranchEntities:
         rows = get_entities_by_path(db, "pkg.mod.ClassA", branch_name="branch-b")
         assert len(rows) == 0
 
+
 class TestFilteredEntitiesByPath:
     def test_type_filter(self, db):
-        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":10}')
-        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="CLASS",
-                      metadata_json='{"lineno":20}')
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":10}',
+        )
+        upsert_entity(
+            db,
+            id="e2",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="CLASS",
+            metadata_json='{"lineno":20}',
+        )
         rows = get_filtered_entities_by_path(db, "mod.dup", type_filter="FUNCTION")
         assert len(rows) == 1
         assert rows[0]["id"] == "e1"
 
     def test_lineno_filter(self, db):
-        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":10}')
-        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="CLASS",
-                      metadata_json='{"lineno":20}')
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":10}',
+        )
+        upsert_entity(
+            db,
+            id="e2",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="CLASS",
+            metadata_json='{"lineno":20}',
+        )
         rows = get_filtered_entities_by_path(db, "mod.dup", lineno=20)
         assert len(rows) == 1
         assert rows[0]["id"] == "e2"
 
     def test_type_and_lineno(self, db):
-        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":10}')
-        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="CLASS",
-                      metadata_json='{"lineno":20}')
-        upsert_entity(db, id="e3", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":30}')
-        rows = get_filtered_entities_by_path(db, "mod.dup", type_filter="FUNCTION", lineno=30)
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":10}',
+        )
+        upsert_entity(
+            db,
+            id="e2",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="CLASS",
+            metadata_json='{"lineno":20}',
+        )
+        upsert_entity(
+            db,
+            id="e3",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":30}',
+        )
+        rows = get_filtered_entities_by_path(
+            db, "mod.dup", type_filter="FUNCTION", lineno=30
+        )
         assert len(rows) == 1
         assert rows[0]["id"] == "e3"
 
@@ -221,21 +348,47 @@ class TestFilteredEntitiesByPath:
 
     def test_scoped_by_branch(self, db, sample_entities):
         upsert_branch_entities(db, "feature", ["id1", "id2"])
-        rows = get_filtered_entities_by_path(db, "pkg.mod.ClassA", branch_name="feature", type_filter="CLASS")
+        rows = get_filtered_entities_by_path(
+            db, "pkg.mod.ClassA", branch_name="feature", type_filter="CLASS"
+        )
         assert len(rows) == 1
         assert rows[0]["id"] == "id1"
-        rows = get_filtered_entities_by_path(db, "pkg.mod.ClassA", branch_name="other", type_filter="CLASS")
+        rows = get_filtered_entities_by_path(
+            db, "pkg.mod.ClassA", branch_name="other", type_filter="CLASS"
+        )
         assert len(rows) == 0
 
     def test_sorted_by_lineno(self, db):
-        upsert_entity(db, id="e3", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":30}')
-        upsert_entity(db, id="e1", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":10}')
-        upsert_entity(db, id="e2", language="python", full_path="mod.dup", name="dup", type="FUNCTION",
-                      metadata_json='{"lineno":20}')
+        upsert_entity(
+            db,
+            id="e3",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":30}',
+        )
+        upsert_entity(
+            db,
+            id="e1",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":10}',
+        )
+        upsert_entity(
+            db,
+            id="e2",
+            language="python",
+            full_path="mod.dup",
+            name="dup",
+            type="FUNCTION",
+            metadata_json='{"lineno":20}',
+        )
         rows = get_filtered_entities_by_path(db, "mod.dup")
         assert [r["id"] for r in rows] == ["e1", "e2", "e3"]
+
 
 class TestSearchFilters:
     def test_type_filter(self, db, sample_entities):
@@ -290,9 +443,12 @@ class TestSearchFilters:
 
     def test_with_branch_scope(self, db, sample_entities):
         upsert_branch_entities(db, "feature", ["id1", "id5"])
-        results = search_entities(db, "ClassA", branch_name="feature", type_filter=["CLASS"])
+        results = search_entities(
+            db, "ClassA", branch_name="feature", type_filter=["CLASS"]
+        )
         assert len(results) == 1
         assert results[0]["id"] == "id1"
+
 
 class TestDetectFileChanges:
     @patch("deputy.tools.utils.compute_sha256", return_value="abc123")
@@ -301,7 +457,9 @@ class TestDetectFileChanges:
         files = [FileMetadata(path="src/main.py", mtime=100.0)]
         tracked = {"src/main.py": ("abc123", 100.0)}
 
-        _, changed, mtime_only, _ = _detect_file_changes(files, tracked, "/tmp", force=True)
+        _, changed, mtime_only, _ = _detect_file_changes(
+            files, tracked, "/tmp", force=True
+        )
         assert "src/main.py" in changed
         assert "src/main.py" not in mtime_only
         mock_hash.assert_called_once()
@@ -312,7 +470,9 @@ class TestDetectFileChanges:
         files = [FileMetadata(path="src/main.py", mtime=100.0)]
         tracked = {"src/main.py": ("abc123", 100.0)}
 
-        _, changed, mtime_only, _ = _detect_file_changes(files, tracked, "/tmp", force=False)
+        _, changed, mtime_only, _ = _detect_file_changes(
+            files, tracked, "/tmp", force=False
+        )
         assert "src/main.py" not in changed
         assert "src/main.py" not in mtime_only
         mock_hash.assert_not_called()
@@ -326,7 +486,9 @@ class TestDetectFileChanges:
         files = [FileMetadata(path="src/main.py", mtime=100.0)]
         tracked = {"src/main.py": ("oldhash", 100.0)}
 
-        _, changed, mtime_only, _ = _detect_file_changes(files, tracked, "/tmp", force=True)
+        _, changed, mtime_only, _ = _detect_file_changes(
+            files, tracked, "/tmp", force=True
+        )
         assert "src/main.py" in changed
         assert "src/main.py" not in mtime_only
 
@@ -336,15 +498,27 @@ class TestDetectFileChanges:
         files = [FileMetadata(path="src/kept.py", mtime=100.0)]
         tracked = {"src/kept.py": ("h1", 100.0), "src/deleted.py": ("h2", 200.0)}
 
-        _, changed, mtime_only, deleted = _detect_file_changes(files, tracked, "/tmp", force=True)
+        _, changed, mtime_only, deleted = _detect_file_changes(
+            files, tracked, "/tmp", force=True
+        )
         assert "src/deleted.py" in deleted
         assert "src/kept.py" in changed or "src/kept.py" in mtime_only
+
 
 class TestClassBases:
     def test_upsert_and_get_direct_bases(self, db):
         bases = [
-            {"base_full_path": "pkg.base.BaseA", "base_entity_id": "id_a", "is_resolved": True},
-            {"base_full_path": "pkg.mixins.Mixin", "base_entity_id": None, "is_resolved": False, "branch_info": '{"branch":"try"}'},
+            {
+                "base_full_path": "pkg.base.BaseA",
+                "base_entity_id": "id_a",
+                "is_resolved": True,
+            },
+            {
+                "base_full_path": "pkg.mixins.Mixin",
+                "base_entity_id": None,
+                "is_resolved": False,
+                "branch_info": '{"branch":"try"}',
+            },
         ]
         upsert_class_bases(db, "class_foo", bases)
         result = get_direct_bases(db, "class_foo")
@@ -355,53 +529,141 @@ class TestClassBases:
         assert result[1]["is_resolved"] == 0
 
     def test_replaces_on_reupsert(self, db):
-        upsert_class_bases(db, "c1", [{"base_full_path": "pkg.Base", "base_entity_id": "old", "is_resolved": True}])
-        upsert_class_bases(db, "c1", [{"base_full_path": "pkg.Base", "base_entity_id": "new", "is_resolved": True}])
+        upsert_class_bases(
+            db,
+            "c1",
+            [
+                {
+                    "base_full_path": "pkg.Base",
+                    "base_entity_id": "old",
+                    "is_resolved": True,
+                }
+            ],
+        )
+        upsert_class_bases(
+            db,
+            "c1",
+            [
+                {
+                    "base_full_path": "pkg.Base",
+                    "base_entity_id": "new",
+                    "is_resolved": True,
+                }
+            ],
+        )
         result = get_direct_bases(db, "c1")
         assert len(result) == 1
         assert result[0]["base_entity_id"] == "new"
 
     def test_delete_class_bases(self, db):
-        upsert_class_bases(db, "c1", [{"base_full_path": "pkg.Base", "is_resolved": True}])
+        upsert_class_bases(
+            db, "c1", [{"base_full_path": "pkg.Base", "is_resolved": True}]
+        )
         delete_class_bases_by_class(db, "c1")
         assert get_direct_bases(db, "c1") == []
 
     def test_isolated_by_class(self, db):
-        upsert_class_bases(db, "c1", [{"base_full_path": "pkg.Base", "is_resolved": True}])
-        upsert_class_bases(db, "c2", [{"base_full_path": "pkg.Base", "is_resolved": True}])
+        upsert_class_bases(
+            db, "c1", [{"base_full_path": "pkg.Base", "is_resolved": True}]
+        )
+        upsert_class_bases(
+            db, "c2", [{"base_full_path": "pkg.Base", "is_resolved": True}]
+        )
         assert len(get_direct_bases(db, "c1")) == 1
         assert len(get_direct_bases(db, "c2")) == 1
 
     def test_get_direct_subclasses(self, db, sample_entities):
-        upsert_class_bases(db, "id1", [{"base_full_path": "pkg.base.Base", "base_entity_id": None, "is_resolved": True}])
-        upsert_class_bases(db, "id4", [{"base_full_path": "pkg.base.Base", "base_entity_id": None, "is_resolved": True}])
+        upsert_class_bases(
+            db,
+            "id1",
+            [
+                {
+                    "base_full_path": "pkg.base.Base",
+                    "base_entity_id": None,
+                    "is_resolved": True,
+                }
+            ],
+        )
+        upsert_class_bases(
+            db,
+            "id4",
+            [
+                {
+                    "base_full_path": "pkg.base.Base",
+                    "base_entity_id": None,
+                    "is_resolved": True,
+                }
+            ],
+        )
         subs = get_direct_subclasses(db, "pkg.base.Base")
         paths = {s["full_path"] for s in subs}
         assert paths == {"pkg.mod.ClassA", "pkg.mod2.ClassA"}
 
     def test_get_direct_subclasses_scoped(self, db, sample_entities):
         upsert_branch_entities(db, "br", ["id1"])
-        upsert_class_bases(db, "id1", [{"base_full_path": "pkg.Base", "is_resolved": True}])
-        upsert_class_bases(db, "id4", [{"base_full_path": "pkg.Base", "is_resolved": True}])
+        upsert_class_bases(
+            db, "id1", [{"base_full_path": "pkg.Base", "is_resolved": True}]
+        )
+        upsert_class_bases(
+            db, "id4", [{"base_full_path": "pkg.Base", "is_resolved": True}]
+        )
         subs = get_direct_subclasses(db, "pkg.Base", branch_name="br")
         assert len(subs) == 1
         assert subs[0]["id"] == "id1"
 
     def test_transitive_subclasses(self, db, sample_entities):
-        upsert_class_bases(db, "id4", [{"base_full_path": "pkg.mod.ClassA", "base_entity_id": "id1", "is_resolved": True}])
+        upsert_class_bases(
+            db,
+            "id4",
+            [
+                {
+                    "base_full_path": "pkg.mod.ClassA",
+                    "base_entity_id": "id1",
+                    "is_resolved": True,
+                }
+            ],
+        )
         subs = get_transitive_subclasses(db, "pkg.mod.ClassA")
         assert len(subs) == 1
         assert subs[0]["id"] == "id4"
 
     def test_transitive_subclasses_multi_level(self, db, sample_entities):
-        upsert_entity(db, id="id6", language="python", full_path="pkg.mod3.ClassC", name="ClassC", type="CLASS",
-                      metadata_json='{"fqn":"pkg.mod3.ClassC","lineno":1}')
-        upsert_class_bases(db, "id4", [{"base_full_path": "pkg.mod.ClassA", "base_entity_id": "id1", "is_resolved": True}])
-        upsert_class_bases(db, "id6", [{"base_full_path": "pkg.mod2.ClassA", "base_entity_id": "id4", "is_resolved": True}])
+        upsert_entity(
+            db,
+            id="id6",
+            language="python",
+            full_path="pkg.mod3.ClassC",
+            name="ClassC",
+            type="CLASS",
+            metadata_json='{"fqn":"pkg.mod3.ClassC","lineno":1}',
+        )
+        upsert_class_bases(
+            db,
+            "id4",
+            [
+                {
+                    "base_full_path": "pkg.mod.ClassA",
+                    "base_entity_id": "id1",
+                    "is_resolved": True,
+                }
+            ],
+        )
+        upsert_class_bases(
+            db,
+            "id6",
+            [
+                {
+                    "base_full_path": "pkg.mod2.ClassA",
+                    "base_entity_id": "id4",
+                    "is_resolved": True,
+                }
+            ],
+        )
         subs = get_transitive_subclasses(db, "pkg.mod.ClassA", branch_name=None)
         paths = {s["full_path"] for s in subs}
         assert "pkg.mod2.ClassA" in paths
         assert "pkg.mod3.ClassC" in paths
+
 
 class TestInheritancePins:
     def test_upsert_and_get(self, db):

@@ -1,22 +1,27 @@
 import json
 import sqlite3
-from dataclasses import dataclass, field
 from collections import defaultdict
+from dataclasses import dataclass, field
+
 from rich.console import Console
-from rich.tree import Tree
 from rich.prompt import Prompt
+from rich.tree import Tree
+
 from deputy.database.sqlite import (
-    get_entity_ids_by_fqn,
     get_entities_by_ids,
     get_entity_by_id,
-)
-from deputy.tools.utils import (
-    get_parent_id,
-    resolve_import_alias as shared_resolve_import_alias,
+    get_entity_ids_by_fqn,
 )
 from deputy.logger import get_logger
+from deputy.tools.utils import (
+    get_parent_id,
+)
+from deputy.tools.utils import (
+    resolve_import_alias as shared_resolve_import_alias,
+)
 
 logger = get_logger("tools.resolve")
+
 
 @dataclass
 class ResolveStep:
@@ -24,6 +29,7 @@ class ResolveStep:
     symbol_name: str
     concrete: list[dict] = field(default_factory=list)
     aliases: list[dict] = field(default_factory=list)
+
 
 class InteractiveResolver:
     def __init__(self, conn: sqlite3.Connection, mode: str = "default"):
@@ -42,9 +48,13 @@ class InteractiveResolver:
 
             if not entities:
                 if steps:
-                    self.console.print("[yellow]End of resolution chain — no further entities found[/yellow]")
+                    self.console.print(
+                        "[yellow]End of resolution chain — no further entities found[/yellow]"
+                    )
                 else:
-                    self.console.print(f"[red]Entity not found:[/red] { current_module}.{current_symbol}")
+                    self.console.print(
+                        f"[red]Entity not found:[/red] {current_module}.{current_symbol}"
+                    )
                 return None
 
             concrete = [e for e in entities if e["type"] != "IMPORT_ALIAS"]
@@ -84,6 +94,7 @@ class InteractiveResolver:
                 if not next_module:
                     self.console.print("[red]Could not resolve import path[/red]")
                     return None
+                assert next_symbol is not None
                 current_module, current_symbol = next_module, next_symbol
                 continue
 
@@ -101,8 +112,11 @@ class InteractiveResolver:
             if not next_module:
                 self.console.print("[red]Could not resolve import path[/red]")
                 return None
+            assert next_symbol is not None
             self.console.print()
-            self.console.print(f"[dim]→ following import to {next_module}.{next_symbol}[/dim]")
+            self.console.print(
+                f"[dim]→ following import to {next_module}.{next_symbol}[/dim]"
+            )
             current_module, current_symbol = next_module, next_symbol
 
     def _print_final_result(self, step: ResolveStep, entity: dict) -> None:
@@ -111,9 +125,13 @@ class InteractiveResolver:
         sp = self._get_source_path(entity)
         lineno = meta.get("lineno", "")
         loc = f" @ {sp}:{lineno}" if sp and lineno else ""
-        self.console.print(f"[green]→ resolved to: {entity['type']} {entity['full_path']}{loc}[/green]")
+        self.console.print(
+            f"[green]→ resolved to: {entity['type']} {entity['full_path']}{loc}[/green]"
+        )
 
-    def _print_auto_trace(self, step: ResolveStep, alias: dict, peek: dict | None) -> None:
+    def _print_auto_trace(
+        self, step: ResolveStep, alias: dict, peek: dict | None
+    ) -> None:
         self.console.print()
         tree = Tree(f"[bold]{step.module_fqn}.{step.symbol_name}[/bold]")
         meta = json.loads(alias["metadata_json"])
@@ -143,7 +161,9 @@ class InteractiveResolver:
         sp = self._get_source_path(entity)
         lineno = meta.get("lineno", "")
         loc = f" @ {sp}:{lineno}" if sp and lineno else ""
-        self.console.print(f"  [green]→ {entity['type']} {entity['full_path']}{loc}[/green]")
+        self.console.print(
+            f"  [green]→ {entity['type']} {entity['full_path']}{loc}[/green]"
+        )
 
     def _prompt_for_choice(
         self,
@@ -225,7 +245,12 @@ class InteractiveResolver:
 
     def _get_source_path(self, entity: dict) -> str | None:
         meta = json.loads(entity["metadata_json"])
-        if entity["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE", "COMPILATION_UNIT"):
+        if entity["type"] in (
+            "MODULE",
+            "PACKAGE",
+            "NAMESPACE_PACKAGE",
+            "COMPILATION_UNIT",
+        ):
             return meta.get("path")
         sid = meta.get("source_id")
         if sid:
@@ -240,7 +265,11 @@ class InteractiveResolver:
         meta = json.loads(entity["metadata_json"])
         original = meta.get("original_name", entity["name"])
         alias_str = meta.get("alias")
-        display_name = f"{original}" if not alias_str or alias_str == entity["name"] else f"{original} as {alias_str}"
+        display_name = (
+            f"{original}"
+            if not alias_str or alias_str == entity["name"]
+            else f"{original} as {alias_str}"
+        )
         lineno = meta.get("lineno", "")
         sp = self._get_source_path(entity)
         loc = f" @ {sp}:{lineno}" if sp and lineno else ""
@@ -276,7 +305,9 @@ class InteractiveResolver:
         lineno = meta.get("lineno", "")
         sp = self._get_source_path(entity)
         loc = f" @ {sp}:{lineno}" if sp and lineno else ""
-        label = f"[{choice['index']}] [green]{entity['type']}[/green] {entity['name']}{loc}"
+        label = (
+            f"[{choice['index']}] [green]{entity['type']}[/green] {entity['name']}{loc}"
+        )
         parent.add(label)
 
     def _peek_target(self, alias: dict) -> dict | None:
@@ -302,7 +333,11 @@ class InteractiveResolver:
             return {"target_fqn": target_fqn, "display": display, "loc": loc}
         elif entities:
             top = entities[0]
-            return {"target_fqn": target_fqn, "display": f"{top['type']} {top['name']}", "loc": ""}
+            return {
+                "target_fqn": target_fqn,
+                "display": f"{top['type']} {top['name']}",
+                "loc": "",
+            }
         return {"target_fqn": target_fqn, "display": None, "loc": ""}
 
     def _format_concrete(self, entity: dict) -> str:
@@ -316,7 +351,11 @@ class InteractiveResolver:
         meta = json.loads(entity["metadata_json"])
         original = meta.get("original_name", entity["name"])
         alias_str = meta.get("alias")
-        display_name = f"{original} as {alias_str}" if alias_str and alias_str != entity["name"] else original
+        display_name = (
+            f"{original} as {alias_str}"
+            if alias_str and alias_str != entity["name"]
+            else original
+        )
         parent_id = get_parent_id(entity)
         container_path = ""
         if parent_id:
@@ -324,14 +363,18 @@ class InteractiveResolver:
             if parent:
                 parent_meta = json.loads(parent["metadata_json"])
                 container_path = parent_meta.get("path", "")
-        return f"{display_name} in {entity['full_path']}" + (f" ({container_path})" if container_path else "")
+        return f"{display_name} in {entity['full_path']}" + (
+            f" ({container_path})" if container_path else ""
+        )
 
     def resolve_all(self, module_fqn: str, symbol_name: str) -> list[dict]:
         results: list[dict] = []
         self._collect_terminals(f"{module_fqn}.{symbol_name}", set(), results)
         return results
 
-    def _collect_terminals(self, fqn: str, visited: set[str], results: list[dict]) -> None:
+    def _collect_terminals(
+        self, fqn: str, visited: set[str], results: list[dict]
+    ) -> None:
         if fqn in visited:
             return
         visited.add(fqn)
@@ -365,11 +408,15 @@ class InteractiveResolver:
                 sp = self._get_source_path(ent)
                 lineno = meta.get("lineno", "")
                 loc = f" @ {sp}:{lineno}" if sp and lineno else ""
-                self.console.print(f"  [green]→ {ent['type']} {ent['name']}{loc}[/green]")
+                self.console.print(
+                    f"  [green]→ {ent['type']} {ent['name']}{loc}[/green]"
+                )
         elif not tree:
             self.console.print(f"\n[red]Entity not found:[/red] {fqn}")
 
-    def _build_all_tree(self, fqn: str, visited: set[str], resolved_targets: set[str]) -> Tree:
+    def _build_all_tree(
+        self, fqn: str, visited: set[str], resolved_targets: set[str]
+    ) -> Tree:
         root = Tree(f"[bold]{fqn}[/bold]")
         if fqn in visited:
             root.add("[dim](circular import)[/dim]")
@@ -400,20 +447,24 @@ class InteractiveResolver:
             alias_node = root.add(label)
             parent_id = get_parent_id(alias)
             from_line = ""
+            imp_name = ""
+            original = alias["name"]
             if parent_id:
                 imp = get_entity_by_id(self.conn, parent_id)
                 if imp:
+                    imp_name = imp["name"]
                     original = meta.get("original_name", alias["name"])
-                    from_line = f"[dim]from {imp['name']} import {original}[/dim]"
+                    from_line = f"[dim]from {imp_name} import {original}[/dim]"
             next_mod, next_sym = shared_resolve_import_alias(self.conn, alias)
             if not next_mod:
                 if from_line:
                     alias_node.add(from_line)
                 continue
             target = f"{next_mod}.{next_sym}"
-            if target in resolved_targets:
-                if from_line:
-                    alias_node.add(f"[dim]from {imp['name']} import {original} (skipped, duplicate path)[/dim]")
+            if target in resolved_targets and from_line:
+                alias_node.add(
+                    f"[dim]from {imp_name} import {original} (skipped, duplicate path)[/dim]"
+                )
                 continue
             resolved_targets.add(target)
             if from_line:
@@ -438,7 +489,9 @@ class InteractiveResolver:
     def _print_all_compact(self, module_fqn: str, symbol_name: str) -> None:
         terminals = self.resolve_all(module_fqn, symbol_name)
         if not terminals:
-            self.console.print(f"[red]Entity not found:[/red] {module_fqn}.{symbol_name}")
+            self.console.print(
+                f"[red]Entity not found:[/red] {module_fqn}.{symbol_name}"
+            )
             return
         for ent in terminals:
             meta = json.loads(ent["metadata_json"])
