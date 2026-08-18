@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 
@@ -135,6 +136,73 @@ class TestJavaModuleResolution:
 
         method_ids = [r["id"] for r in records if r["type"] == "METHOD"]
         assert get_containing_module_fqn(db, method_ids[0]) == "com.example.Main"
+
+
+class TestJavaModuleSync:
+    def test_module_info_and_class(self):
+        tmp = _make_project(
+            {
+                "src/module-info.java": """module com.example.app {
+    requires java.base;
+    requires transitive java.logging;
+    exports com.example;
+    opens com.example.internal to com.example.impl;
+    uses com.example.Service;
+    provides com.example.Service with com.example.impl.ServiceImpl;
+}
+""",
+                "src/com/example/Main.java": "package com.example;\npublic class Main {\n    public void run() {}\n}\n",
+            }
+        )
+        files = [
+            FileMetadata(path="src/module-info.java", mtime=1.0),
+            FileMetadata(path="src/com/example/Main.java", mtime=1.0),
+        ]
+        ctx = create_context(tmp, None)
+        records, rel = _process_files(ctx, files, tmp)
+
+        java_types = {r["type"] for r in records}
+        assert {"MODULE", "PACKAGE", "COMPILATION_UNIT", "CLASS"} <= java_types
+        assert all(r["language"] == "java" for r in records)
+
+        modules = [r for r in records if r["type"] == "MODULE"]
+        assert len(modules) == 1
+        assert modules[0]["full_path"] == "com.example.app"
+        assert modules[0]["name"] == "com.example.app"
+        assert modules[0]["parent_id"] is None
+
+        meta = json.loads(modules[0]["metadata_json"])
+        assert meta["module_name"] == "com.example.app"
+        assert meta["requires"] == ["java.base"]
+        assert meta["requires_transitive"] == ["java.logging"]
+        assert meta["exports"] == ["com.example"]
+        assert meta["qualified_opens"] == {"com.example.internal": ["com.example.impl"]}
+        assert meta["uses"] == ["com.example.Service"]
+        assert meta["provides"] == {
+            "com.example.Service": ["com.example.impl.ServiceImpl"]
+        }
+        assert meta["path"] == "src/module-info.java"
+
+        classes = [r for r in records if r["type"] == "CLASS"]
+        assert any(r["full_path"] == "com.example.Main" for r in classes)
+
+        assert rel == {
+            "src/module-info.java": "com.example.app",
+            "src/com/example/Main.java": "com.example.Main",
+        }
+
+    def test_no_module_info_has_no_module_record(self):
+        tmp = _make_project(
+            {
+                "src/Main.java": "package com.example;\npublic class Main {}\n",
+            }
+        )
+        files = [FileMetadata(path="src/Main.java", mtime=1.0)]
+        ctx = create_context(tmp, None)
+        records, _ = _process_files(ctx, files, tmp)
+
+        assert "MODULE" not in {r["type"] for r in records}
+        assert any(r["type"] == "CLASS" for r in records)
 
 
 class TestJavaSearch:
