@@ -189,7 +189,9 @@ def _process_files(
             logger.debug("parsing: %s", fmeta.path)
             sf = parser.parse_file(abs_path, lang_ctx)
             source_files.append(sf)
-            relpath_to_fqn[fmeta.path] = sf.fqn
+            relpath_to_fqn[fmeta.path] = getattr(sf, "fqn", None) or getattr(
+                sf, "module_name", None
+            )
 
         logger.debug("linking %d %s source files", len(source_files), lang)
         linker.link_files(source_files, lang_ctx)
