@@ -54,7 +54,8 @@ def get_containing_module_fqn(conn: sqlite3.Connection, entity_id: str) -> str |
         if not entity:
             return None
         if entity["type"] in (
-            "MODULE",
+            "PYTHON_MODULE",
+            "JAVA_MODULE",
             "PACKAGE",
             "NAMESPACE_PACKAGE",
             "COMPILATION_UNIT",
