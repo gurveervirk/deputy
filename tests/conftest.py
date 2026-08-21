@@ -50,7 +50,7 @@ def sample_entities(db):
             "language": "python",
             "full_path": "pkg.mod2",
             "name": "mod2",
-            "type": "MODULE",
+            "type": "PYTHON_MODULE",
             "metadata_json": '{"fqn":"pkg.mod2","path":"pkg/mod2.py"}',
         },
     ]

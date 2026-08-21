@@ -83,7 +83,7 @@ class TestEntityRecord:
 
         record = _entity_record(entity, self._registry([]), {})
         assert record["full_path"] == "pkg.mod"
-        assert record["type"] == "MODULE"
+        assert record["type"] == "PYTHON_MODULE"
         assert record["name"] == "mod"
 
     def test_constant(self):

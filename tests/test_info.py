@@ -207,7 +207,7 @@ class TestComputeSource:
                 "python",
                 "pkg.mod",
                 "mod",
-                "MODULE",
+                "PYTHON_MODULE",
                 '{"fqn":"pkg.mod","path":"pkg/mod.py"}',
             ),
         )
@@ -223,7 +223,7 @@ class TestComputeSource:
                 "python",
                 "pkg.mod",
                 "mod",
-                "MODULE",
+                "PYTHON_MODULE",
                 '{"fqn":"pkg.mod","path":"pkg/mod.py"}',
             ),
         )
@@ -461,7 +461,7 @@ class TestGetEntityInfo:
                 language="python",
                 full_path="mod",
                 name="mod",
-                type="MODULE",
+                type="PYTHON_MODULE",
                 metadata_json=source_meta,
             )
             upsert_branch_entities(info_db, "main", ["mod1"])
@@ -512,7 +512,7 @@ class TestGetEntityInfo:
             language="python",
             full_path="mod",
             name="mod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"mod","path":"nonexistent.py"}',
         )
         upsert_branch_entities(info_db, "main", ["mod1"])

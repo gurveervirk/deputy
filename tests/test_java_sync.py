@@ -162,10 +162,10 @@ class TestJavaModuleSync:
         records, rel = _process_files(ctx, files, tmp)
 
         java_types = {r["type"] for r in records}
-        assert {"MODULE", "PACKAGE", "COMPILATION_UNIT", "CLASS"} <= java_types
+        assert {"JAVA_MODULE", "PACKAGE", "COMPILATION_UNIT", "CLASS"} <= java_types
         assert all(r["language"] == "java" for r in records)
 
-        modules = [r for r in records if r["type"] == "MODULE"]
+        modules = [r for r in records if r["type"] == "JAVA_MODULE"]
         assert len(modules) == 1
         assert modules[0]["full_path"] == "com.example.app"
         assert modules[0]["name"] == "com.example.app"
@@ -201,7 +201,7 @@ class TestJavaModuleSync:
         ctx = create_context(tmp, None)
         records, _ = _process_files(ctx, files, tmp)
 
-        assert "MODULE" not in {r["type"] for r in records}
+        assert "JAVA_MODULE" not in {r["type"] for r in records}
         assert any(r["type"] == "CLASS" for r in records)
 
 
