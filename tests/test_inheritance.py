@@ -417,7 +417,7 @@ class TestInheritedMemberSource:
             language="python",
             full_path="mymod",
             name="mymod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"mymod","path":"mymod.py"}',
         )
         upsert_entity(
@@ -478,7 +478,7 @@ class TestInheritedMemberSource:
             language="python",
             full_path="mymod",
             name="mymod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"mymod","path":"mymod.py"}',
         )
         upsert_entity(

@@ -58,6 +58,15 @@ AVAILABLE_COLUMNS = {
     "is_abstract": "Whether abstract (Java/Python)",
     "is_final": "Whether final (Java)",
     "is_static": "Whether static (Java/Python)",
+    "requires": "Java module required modules",
+    "requires_static": "Java module static-required modules",
+    "requires_transitive": "Java module transitive-required modules",
+    "exports": "Java module exported packages",
+    "qualified_exports": "Java module qualified exports (package -> targets)",
+    "opens": "Java module opened packages",
+    "qualified_opens": "Java module qualified opens (package -> targets)",
+    "uses": "Java module service uses",
+    "provides": "Java module service provides (service -> impls)",
 }
 
 DEFAULT_COLUMNS = ["full_path", "language", "type", "source"]
@@ -215,6 +224,19 @@ def _get_column_value(
         return str(meta.get("is_final", ""))
     if col == "is_static":
         return str(meta.get("is_static", ""))
+    if col in (
+        "requires",
+        "requires_static",
+        "requires_transitive",
+        "exports",
+        "opens",
+        "uses",
+    ):
+        return ", ".join(meta.get(col) or [])
+    if col in ("qualified_exports", "qualified_opens", "provides"):
+        return "; ".join(
+            f"{k} -> {', '.join(v)}" for k, v in (meta.get(col) or {}).items()
+        )
     if col == "resolved_bases":
         return _format_resolved_bases(entity)
     if col == "unresolved_bases":

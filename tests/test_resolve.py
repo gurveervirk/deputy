@@ -22,7 +22,7 @@ def sample_import_graph(db):
             "language": "python",
             "full_path": "pkg.core",
             "name": "core",
-            "type": "MODULE",
+            "type": "PYTHON_MODULE",
             "metadata_json": '{"fqn":"pkg.core","path":"pkg/core.py"}',
         },
         {
@@ -30,7 +30,7 @@ def sample_import_graph(db):
             "language": "python",
             "full_path": "pkg.utils",
             "name": "utils",
-            "type": "MODULE",
+            "type": "PYTHON_MODULE",
             "metadata_json": '{"fqn":"pkg.utils","path":"pkg/utils.py"}',
         },
         {
@@ -117,7 +117,7 @@ class TestResolveAlias:
             language="python",
             full_path="a",
             name="a",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"a","path":"a.py"}',
         )
         upsert_entity(
@@ -126,7 +126,7 @@ class TestResolveAlias:
             language="python",
             full_path="b",
             name="b",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"b","path":"b.py"}',
         )
         upsert_entity(
@@ -135,7 +135,7 @@ class TestResolveAlias:
             language="python",
             full_path="c",
             name="c",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"c","path":"c.py"}',
         )
         upsert_entity(
@@ -224,7 +224,7 @@ class TestRelativeImport:
             language="python",
             full_path="mypkg.sub",
             name="sub",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"mypkg.sub","path":"mypkg/sub.py"}',
         )
         upsert_entity(
@@ -274,7 +274,7 @@ class TestResolveAll:
             language="python",
             full_path="pkg",
             name="pkg",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"pkg","path":"pkg.py"}',
         )
         upsert_entity(
@@ -283,7 +283,7 @@ class TestResolveAll:
             language="python",
             full_path="pkg.mod",
             name="mod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"pkg.mod","path":"pkg/mod.py"}',
         )
         upsert_entity(
@@ -328,7 +328,7 @@ class TestResolveAll:
             language="python",
             full_path="mod",
             name="mod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"mod","path":"mod.py"}',
         )
         for i, bid in enumerate(["v1", "v2", "v3"]):
@@ -356,7 +356,7 @@ class TestResolveAll:
             language="python",
             full_path="top",
             name="top",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"top","path":"top.py"}',
         )
         upsert_entity(
@@ -365,7 +365,7 @@ class TestResolveAll:
             language="python",
             full_path="bot",
             name="bot",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"bot","path":"bot.py"}',
         )
         upsert_entity(
@@ -410,7 +410,7 @@ class TestResolveAll:
             language="python",
             full_path="a",
             name="a",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"a","path":"a.py"}',
         )
         upsert_entity(
@@ -463,7 +463,7 @@ class TestResolveAll:
             language="python",
             full_path="pkg",
             name="pkg",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"pkg","path":"pkg.py"}',
         )
         upsert_entity(
@@ -512,7 +512,7 @@ class TestResolveAll:
             language="python",
             full_path="dir.mod",
             name="mod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"dir.mod","path":"dir/mod.py"}',
         )
         upsert_entity(
@@ -543,7 +543,7 @@ class TestResolveWithBranch:
             language="python",
             full_path="x.mod",
             name="mod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"x.mod","path":"x/mod.py"}',
         )
         upsert_entity(
@@ -573,7 +573,7 @@ class TestMultiVariant:
             language="python",
             full_path="pkg.mod",
             name="mod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"pkg.mod","path":"pkg/mod.py"}',
         )
         for i, bid in enumerate(["v1", "v2", "v3"]):
@@ -603,7 +603,7 @@ class TestMultiVariant:
             language="python",
             full_path="pkg",
             name="pkg",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"pkg"}',
         )
         for i, cid in enumerate(["c1", "c2", "c3"]):
@@ -632,7 +632,7 @@ class TestMultiVariant:
             language="python",
             full_path="mix.mod",
             name="mod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"mix.mod","path":"mix/mod.py"}',
         )
         upsert_entity(
@@ -681,7 +681,7 @@ class TestMultiLevel:
             language="python",
             full_path="a",
             name="a",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"a","path":"a.py"}',
         )
         upsert_entity(
@@ -690,7 +690,7 @@ class TestMultiLevel:
             language="python",
             full_path="b",
             name="b",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"b","path":"b.py"}',
         )
         upsert_entity(
@@ -699,7 +699,7 @@ class TestMultiLevel:
             language="python",
             full_path="c",
             name="c",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"c","path":"c.py"}',
         )
         upsert_entity(
@@ -763,7 +763,7 @@ class TestMultiLevel:
             language="python",
             full_path="top",
             name="top",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"top","path":"top.py"}',
         )
         upsert_entity(
@@ -772,7 +772,7 @@ class TestMultiLevel:
             language="python",
             full_path="mid",
             name="mid",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"mid","path":"mid.py"}',
         )
         upsert_entity(
@@ -781,7 +781,7 @@ class TestMultiLevel:
             language="python",
             full_path="bot",
             name="bot",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"bot","path":"bot.py"}',
         )
 
@@ -861,7 +861,7 @@ class TestControlFlowAlias:
             language="python",
             full_path="cf",
             name="cf",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"cf","path":"cf.py"}',
         )
         upsert_entity(
@@ -870,7 +870,7 @@ class TestControlFlowAlias:
             language="python",
             full_path="target",
             name="target",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"target","path":"target.py"}',
         )
         upsert_entity(
@@ -919,7 +919,7 @@ class TestPeekTarget:
             language="python",
             full_path="pkg.run_src",
             name="run_src",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"pkg.run_src","path":"pkg/run_src.py"}',
         )
         upsert_entity(
@@ -928,7 +928,7 @@ class TestPeekTarget:
             language="python",
             full_path="pkg",
             name="pkg",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"pkg","path":"pkg.py"}',
         )
         upsert_entity(
@@ -979,7 +979,7 @@ class TestPeekTarget:
             language="python",
             full_path="orphan",
             name="orphan",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"orphan","path":"orphan.py"}',
         )
         db.commit()
@@ -1003,7 +1003,7 @@ class TestResolveDisplay:
             language="python",
             full_path="disp",
             name="disp",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"disp","path":"disp.py"}',
         )
         upsert_entity(

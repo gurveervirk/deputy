@@ -133,7 +133,12 @@ def _classify_candidate_scope(conn: sqlite3.Connection, entity: dict) -> str:
             break
         if current["type"] == "CONTROL_FLOW_BLOCK":
             return f"conditional:{current.get('name', '')}"
-        if current["type"] in ("MODULE", "PACKAGE", "NAMESPACE_PACKAGE"):
+        if current["type"] in (
+            "PYTHON_MODULE",
+            "JAVA_MODULE",
+            "PACKAGE",
+            "NAMESPACE_PACKAGE",
+        ):
             return "module_level"
         current_id = get_parent_id(current)
     return "module_level"

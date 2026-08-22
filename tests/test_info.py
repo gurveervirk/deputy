@@ -143,6 +143,59 @@ class TestGetColumnValue:
     def test_exported_missing(self):
         assert _get_column_value({}, "exported", {}) == ""
 
+    def test_module_list_columns(self):
+        meta = {
+            "requires": ["java.base", "java.logging"],
+            "requires_static": ["java.sql"],
+            "requires_transitive": ["java.logging"],
+            "exports": ["com.example.models"],
+            "opens": ["com.example.service"],
+            "uses": ["com.example.service.Zoo"],
+        }
+        for col in (
+            "requires",
+            "requires_static",
+            "requires_transitive",
+            "exports",
+            "opens",
+            "uses",
+        ):
+            assert _get_column_value({}, col, meta) == ", ".join(meta[col])
+
+    def test_module_list_columns_empty(self):
+        meta = {"requires": [], "exports": [], "uses": []}
+        for col in ("requires", "exports", "uses"):
+            assert _get_column_value({}, col, meta) == ""
+
+    def test_module_list_columns_missing(self):
+        for col in ("requires", "exports", "uses"):
+            assert _get_column_value({}, col, {}) == ""
+
+    def test_module_mapping_columns(self):
+        meta = {
+            "qualified_exports": {"com.example.service": ["com.example.consumer"]},
+            "qualified_opens": {"com.example.models": ["com.example.consumer"]},
+            "provides": {"com.example.models.Runnable": ["com.example.service.Zoo"]},
+        }
+        assert (
+            _get_column_value({}, "qualified_exports", meta)
+            == "com.example.service -> com.example.consumer"
+        )
+        assert (
+            _get_column_value({}, "qualified_opens", meta)
+            == "com.example.models -> com.example.consumer"
+        )
+        assert (
+            _get_column_value({}, "provides", meta)
+            == "com.example.models.Runnable -> com.example.service.Zoo"
+        )
+
+    def test_module_mapping_columns_empty(self):
+        assert _get_column_value({}, "provides", {"provides": {}}) == ""
+
+    def test_module_mapping_columns_missing(self):
+        assert _get_column_value({}, "provides", {}) == ""
+
 
 class TestComputeSource:
     def test_module_with_path_no_lineno(self, db):
@@ -154,7 +207,7 @@ class TestComputeSource:
                 "python",
                 "pkg.mod",
                 "mod",
-                "MODULE",
+                "PYTHON_MODULE",
                 '{"fqn":"pkg.mod","path":"pkg/mod.py"}',
             ),
         )
@@ -170,7 +223,7 @@ class TestComputeSource:
                 "python",
                 "pkg.mod",
                 "mod",
-                "MODULE",
+                "PYTHON_MODULE",
                 '{"fqn":"pkg.mod","path":"pkg/mod.py"}',
             ),
         )
@@ -408,7 +461,7 @@ class TestGetEntityInfo:
                 language="python",
                 full_path="mod",
                 name="mod",
-                type="MODULE",
+                type="PYTHON_MODULE",
                 metadata_json=source_meta,
             )
             upsert_branch_entities(info_db, "main", ["mod1"])
@@ -459,7 +512,7 @@ class TestGetEntityInfo:
             language="python",
             full_path="mod",
             name="mod",
-            type="MODULE",
+            type="PYTHON_MODULE",
             metadata_json='{"fqn":"mod","path":"nonexistent.py"}',
         )
         upsert_branch_entities(info_db, "main", ["mod1"])

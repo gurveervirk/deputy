@@ -246,7 +246,8 @@ class InteractiveResolver:
     def _get_source_path(self, entity: dict) -> str | None:
         meta = json.loads(entity["metadata_json"])
         if entity["type"] in (
-            "MODULE",
+            "PYTHON_MODULE",
+            "JAVA_MODULE",
             "PACKAGE",
             "NAMESPACE_PACKAGE",
             "COMPILATION_UNIT",
