@@ -248,3 +248,42 @@ class TestJavaSearch:
         assert results == []
         results = search_entities(db, "Main")
         assert len(results) == 1
+
+
+class TestJavaPackageInfoSync:
+    def test_package_info_indexed(self):
+        tmp = _make_project(
+            {
+                "src/com/example/models/package-info.java": (
+                    "/**\n * Model classes.\n */\n"
+                    "@Deprecated\n"
+                    "package com.example.models;\n"
+                ),
+                "src/com/example/models/User.java": (
+                    "package com.example.models;\npublic class User {}\n"
+                ),
+            }
+        )
+        files = [
+            FileMetadata(path="src/com/example/models/package-info.java", mtime=1.0),
+            FileMetadata(path="src/com/example/models/User.java", mtime=1.0),
+        ]
+        ctx = create_context(tmp, None)
+        records, rel = _process_files(ctx, files, tmp)
+
+        infos = [r for r in records if r["type"] == "PACKAGE_INFO"]
+        assert len(infos) == 1
+        assert infos[0]["full_path"] == "com.example.models.package-info"
+        assert infos[0]["language"] == "java"
+
+        meta = json.loads(infos[0]["metadata_json"])
+        assert meta["package_fqn"] == "com.example.models"
+        assert meta["path"] == "src/com/example/models/package-info.java"
+        assert meta["annotations"] == ["Deprecated"]
+
+        packages = [r for r in records if r["type"] == "PACKAGE"]
+        model_pkg = next(p for p in packages if p["full_path"] == "com.example.models")
+        pkg_meta = json.loads(model_pkg["metadata_json"])
+        assert pkg_meta["package_info_id"] == infos[0]["id"]
+
+        assert rel["src/com/example/models/User.java"] == "com.example.models.User"
