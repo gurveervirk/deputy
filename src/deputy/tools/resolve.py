@@ -250,6 +250,7 @@ class InteractiveResolver:
             "JAVA_MODULE",
             "PACKAGE",
             "NAMESPACE_PACKAGE",
+            "PACKAGE_INFO",
             "COMPILATION_UNIT",
         ):
             return meta.get("path")

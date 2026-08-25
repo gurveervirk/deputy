@@ -278,6 +278,7 @@ def _compute_source(entity: dict, conn) -> str:
         "JAVA_MODULE",
         "PACKAGE",
         "NAMESPACE_PACKAGE",
+        "PACKAGE_INFO",
         "COMPILATION_UNIT",
     ):
         return meta.get("path", "")
@@ -309,6 +310,7 @@ def _get_source_file_path(entity: dict, conn, base_path: str) -> str | None:
         "JAVA_MODULE",
         "PACKAGE",
         "NAMESPACE_PACKAGE",
+        "PACKAGE_INFO",
         "COMPILATION_UNIT",
     ):
         path = meta.get("path", "")

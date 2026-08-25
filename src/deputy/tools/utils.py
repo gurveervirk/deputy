@@ -58,6 +58,7 @@ def get_containing_module_fqn(conn: sqlite3.Connection, entity_id: str) -> str |
             "JAVA_MODULE",
             "PACKAGE",
             "NAMESPACE_PACKAGE",
+            "PACKAGE_INFO",
             "COMPILATION_UNIT",
         ):
             return entity["full_path"]

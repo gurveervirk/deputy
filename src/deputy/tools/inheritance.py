@@ -138,6 +138,7 @@ def _classify_candidate_scope(conn: sqlite3.Connection, entity: dict) -> str:
             "JAVA_MODULE",
             "PACKAGE",
             "NAMESPACE_PACKAGE",
+            "PACKAGE_INFO",
         ):
             return "module_level"
         current_id = get_parent_id(current)
