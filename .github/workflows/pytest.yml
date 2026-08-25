@@ -5,6 +5,11 @@ on:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
+  workflow_dispatch:
+    inputs:
+      deproc_ref:
+        description: "deproc branch/ref to test against (overrides .github/deproc-ref)"
+        required: false
 
 jobs:
   test:
@@ -18,8 +23,19 @@ jobs:
     - name: Checkout deputy
       uses: actions/checkout@v5
 
+    - name: Determine deproc ref
+      id: deproc
+      env:
+        DEPROC_REF_INPUT: ${{ inputs.deproc_ref }}
+      run: |
+        if [ -n "$DEPROC_REF_INPUT" ]; then
+          echo "ref=$DEPROC_REF_INPUT" >> "$GITHUB_OUTPUT"
+        else
+          echo "ref=$(cat .github/deproc-ref)" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Clone deproc
-      run: git clone --depth 1 https://github.com/gurveervirk/deproc.git ../deproc
+      run: git clone --depth 1 --branch "${{ steps.deproc.outputs.ref }}" https://github.com/gurveervirk/deproc.git ../deproc
 
     - name: Install uv
       uses: astral-sh/setup-uv@v5
