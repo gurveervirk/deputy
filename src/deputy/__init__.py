@@ -452,6 +452,9 @@ def resolve(
     compact: bool = typer.Option(
         False, "--compact", help="Compact output with --all (terminal entities only)"
     ),
+    deproc: bool = typer.Option(
+        False, "--deproc", help="Resolve through deproc semantics for the active branch"
+    ),
 ) -> None:
     parts = symbol.rsplit(".", 1)
     if len(parts) != 2:
@@ -471,7 +474,12 @@ def resolve(
         console.print("[red]--compact requires --all[/red]")
         raise typer.Exit(code=1)
 
-    resolver = InteractiveResolver(conn, mode="default")
+    resolver = InteractiveResolver(
+        conn,
+        mode="default",
+        branch_name=get_current_branch(),
+        backend="deproc" if deproc else "sqlite",
+    )
     if all:
         if compact:
             resolver._print_all_compact(module_fqn, symbol_name)

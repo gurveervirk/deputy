@@ -13,6 +13,7 @@ from deputy.database.sqlite import (
     get_entity_ids_by_fqn,
 )
 from deputy.logger import get_logger
+from deputy.tools.deproc_resolution import DeprocResolutionAdapter
 from deputy.tools.utils import (
     get_parent_id,
 )
@@ -32,12 +33,27 @@ class ResolveStep:
 
 
 class InteractiveResolver:
-    def __init__(self, conn: sqlite3.Connection, mode: str = "default"):
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        mode: str = "default",
+        branch_name: str | None = None,
+        backend: str = "sqlite",
+    ):
         self.conn = conn
         self.mode = mode
+        self.backend = backend
+        self.deproc_adapter = (
+            DeprocResolutionAdapter(conn, branch_name)
+            if backend == "deproc" and branch_name
+            else None
+        )
         self.console = Console()
 
     def resolve(self, module_fqn: str, symbol_name: str) -> dict | None:
+        if self.backend == "deproc" and self.mode != "step":
+            return self._resolve_with_deproc(module_fqn, symbol_name)
+
         steps: list[ResolveStep] = []
         current_module = module_fqn
         current_symbol = symbol_name
@@ -118,6 +134,37 @@ class InteractiveResolver:
                 f"[dim]→ following import to {next_module}.{next_symbol}[/dim]"
             )
             current_module, current_symbol = next_module, next_symbol
+
+    def _resolve_with_deproc(self, module_fqn: str, symbol_name: str) -> dict | None:
+        if self.deproc_adapter is None:
+            raise ValueError("branch_name is required for the deproc backend")
+
+        result = self.deproc_adapter.resolve(module_fqn, symbol_name)
+        if not result.resolved:
+            if result.inaccessible:
+                self.console.print(
+                    f"[red]Inaccessible entity:[/red] {module_fqn}.{symbol_name}"
+                )
+            elif result.unresolved:
+                self.console.print(
+                    f"[yellow]Unresolved entity:[/yellow] {module_fqn}.{symbol_name}"
+                )
+            else:
+                self.console.print(
+                    f"[red]Entity not found:[/red] {module_fqn}.{symbol_name}"
+                )
+            return None
+
+        step = ResolveStep(
+            module_fqn=module_fqn,
+            symbol_name=symbol_name,
+            concrete=list(result.resolved),
+        )
+        if len(result.resolved) == 1:
+            self._print_final_result(step, result.resolved[0])
+            return result.resolved[0]
+        self._print_step_header(step)
+        return self._prompt_for_concrete(list(result.resolved))
 
     def _print_final_result(self, step: ResolveStep, entity: dict) -> None:
         self._print_step_header(step)

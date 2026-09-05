@@ -215,6 +215,17 @@ def get_entities_by_ids(conn: sqlite3.Connection, entity_ids: set[str]) -> list[
     return [dict(row) for row in rows]
 
 
+def get_branch_entities(conn: sqlite3.Connection, branch_name: str) -> list[dict]:
+    rows = conn.execute(
+        """SELECT e.* FROM entities e
+           JOIN branch_entities be ON e.id = be.entity_id
+           WHERE be.branch_name = ?
+           ORDER BY e.id""",
+        (branch_name,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_entities_by_path(
     conn: sqlite3.Connection, full_path: str, branch_name: str | None = None
 ) -> list[dict]:

@@ -1,10 +1,12 @@
 from deproc.core.context import Context
 from deproc.plugins.java import (
     JavaLinker,
+    JavaResolver,
     JavaSourceParser,
 )
 from deproc.plugins.python import (
     PythonLinker,
+    PythonResolver,
     PythonSourceParser,
 )
 
@@ -20,11 +22,13 @@ def create_context(base_path: str, conn, enable_cache: bool = False) -> Context:
     ctx.set_language("python", [".py", ".pyi"], aliases=["py"])
     ctx.set_parser("python", PythonSourceParser())
     ctx.set_linker("python", PythonLinker())
+    ctx.set_resolver("python", PythonResolver())
 
     # Register java
     ctx.set_language("java", [".java"])
     ctx.set_parser("java", JavaSourceParser())
     ctx.set_linker("java", JavaLinker())
+    ctx.set_resolver("java", JavaResolver())
 
     ctx.set_skip_paths(
         {

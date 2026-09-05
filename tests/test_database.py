@@ -7,6 +7,7 @@ from deputy.database.sqlite import (
     delete_class_bases_by_class,
     delete_entity_by_module_fqn,
     delete_inheritance_pin,
+    get_branch_entities,
     get_branch_files,
     get_config,
     get_direct_bases,
@@ -215,6 +216,12 @@ class TestConfig:
 
 
 class TestBranchEntities:
+    def test_get_branch_entities_is_scoped(self, db, sample_entities):
+        upsert_branch_entities(db, "main", ["id1", "id2"])
+        upsert_branch_entities(db, "other", ["id3"])
+        rows = get_branch_entities(db, "main")
+        assert {row["id"] for row in rows} == {"id1", "id2"}
+
     def test_upsert_and_delete(self, db):
         upsert_branch_entities(db, "main", ["a", "b", "c"])
         upsert_branch_entities(db, "other", ["a", "d"])
