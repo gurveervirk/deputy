@@ -45,3 +45,11 @@ def test_create_context_registers_python():
     ctx = create_context("/base", conn)
     assert ctx.has_parser("python")
     assert ctx.has_linker("python")
+    assert ctx.has_resolver("python")
+
+
+def test_create_context_registers_resolvers():
+    conn = MagicMock()
+    ctx = create_context("/base", conn)
+    assert ctx.has_resolver("python")
+    assert ctx.has_resolver("java")
