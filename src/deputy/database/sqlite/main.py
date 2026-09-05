@@ -105,6 +105,7 @@ def delete_entity_by_module_fqn(conn: sqlite3.Connection, module_fqn: str) -> No
         "DELETE FROM entities WHERE full_path = ? OR full_path LIKE ?",
         (module_fqn, f"{module_fqn}.%"),
     )
+    clean_stale_inheritance_rows(conn)
 
 
 def search_entities(
@@ -467,6 +468,11 @@ def upsert_inheritance_pin(
     pinned_entity_id: str,
     branch_name: str,
 ) -> None:
+    row = conn.execute(
+        "SELECT type FROM entities WHERE id = ?", (pinned_entity_id,)
+    ).fetchone()
+    if row is None or row["type"] != "CLASS":
+        raise ValueError("inheritance pins must target a CLASS entity")
     conn.execute(
         """INSERT OR REPLACE INTO inheritance_pins
            (class_entity_id, base_name, pinned_entity_id, branch_name)
@@ -518,3 +524,48 @@ def clean_orphan_entities(conn: sqlite3.Connection) -> None:
     conn.execute(
         "DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM branch_entities)"
     )
+    clean_stale_inheritance_rows(conn)
+
+
+def clean_stale_inheritance_rows(
+    conn: sqlite3.Connection, branch_name: str | None = None
+) -> None:
+    conn.execute(
+        """DELETE FROM class_bases
+           WHERE class_entity_id NOT IN (
+               SELECT id FROM entities WHERE type = 'CLASS'
+           )
+           OR class_entity_id NOT IN (
+               SELECT entity_id FROM branch_entities
+           )
+           OR (
+               base_entity_id IS NOT NULL
+               AND base_entity_id NOT IN (
+                   SELECT id FROM entities WHERE type = 'CLASS'
+               )
+           )
+           OR (
+               base_entity_id IS NOT NULL
+               AND base_entity_id NOT IN (
+                   SELECT entity_id FROM branch_entities
+               )
+           )"""
+    )
+    conn.execute(
+        """DELETE FROM inheritance_pins
+           WHERE class_entity_id NOT IN (
+               SELECT id FROM entities WHERE type = 'CLASS'
+           )
+           OR pinned_entity_id NOT IN (
+               SELECT id FROM entities WHERE type = 'CLASS'
+           )"""
+    )
+    if branch_name is not None:
+        conn.execute(
+            """DELETE FROM inheritance_pins
+               WHERE branch_name = ?
+               AND class_entity_id NOT IN (
+                   SELECT entity_id FROM branch_entities WHERE branch_name = ?
+               )""",
+            (branch_name, branch_name),
+        )

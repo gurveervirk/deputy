@@ -3,6 +3,7 @@ import json
 from deputy.database.sqlite import (
     get_entity_by_id,
     get_entity_by_path,
+    upsert_branch_entities,
     upsert_class_bases,
     upsert_entity,
 )
@@ -13,6 +14,7 @@ from deputy.tools.inheritance import (
     clean_inherited_member_entities,
     compute_class_mro,
     eager_resolve_all_inherited_members,
+    resolve_all_inherits,
     resolve_entity_through_mro,
 )
 
@@ -106,6 +108,28 @@ class TestCleanSyntheticEntities:
 
     def test_no_synthetic_entities_is_harmless(self, db):
         clean_inherited_member_entities(db)
+
+    def test_branch_cleanup_preserves_other_branch(self, db):
+        upsert_entity(
+            db,
+            id="shared-synthetic",
+            language="python",
+            full_path="Child.foo",
+            name="foo",
+            type="INHERITED_MEMBER",
+            metadata_json='{"inherited": true}',
+        )
+        upsert_branch_entities(db, "main", ["shared-synthetic"])
+        upsert_branch_entities(db, "feature", ["shared-synthetic"])
+
+        clean_inherited_member_entities(db, branch="main")
+
+        assert get_entity_by_path(db, "Child.foo") is not None
+        branches = db.execute(
+            "SELECT branch_name FROM branch_entities WHERE entity_id = ?",
+            ("shared-synthetic",),
+        ).fetchall()
+        assert [row["branch_name"] for row in branches] == ["feature"]
 
 
 class TestCreateInheritedBaseAliases:
@@ -330,7 +354,7 @@ class TestComputeClassMro:
         mro = compute_class_mro(db, "c2")
         assert mro == ["Child", "Base"]
 
-    def test_unresolved_base_returns_self_only(self, db):
+    def test_unresolved_base_is_incomplete(self, db):
         _upsert_class(db, "c1", "Child", "Child", parent_classes=["Unknown"])
         upsert_class_bases(
             db,
@@ -344,12 +368,66 @@ class TestComputeClassMro:
             ],
         )
         mro = compute_class_mro(db, "c1")
-        assert mro == ["Child"]
+        assert mro is None
+
+    def test_partial_mro_is_used_only_for_eager_aliases(self, db):
+        _upsert_method(db, "m1", "Base.foo", "foo")
+        _upsert_class(db, "base", "Base", "Base", method_ids=["m1"])
+        _upsert_class(
+            db,
+            "child",
+            "Child",
+            "Child",
+            parent_classes=["Base", "Unknown"],
+        )
+        upsert_class_bases(
+            db,
+            "child",
+            [
+                {
+                    "base_full_path": "Base",
+                    "base_entity_id": "base",
+                    "is_resolved": True,
+                },
+                {
+                    "base_full_path": "Unknown",
+                    "base_entity_id": None,
+                    "is_resolved": False,
+                },
+            ],
+        )
+
+        assert compute_class_mro(db, "child") is None
+        records = _build_records(db)
+        created = _create_inherited_base_aliases(db, records, "main")
+        assert [entity["full_path"] for entity in created] == ["Child.foo"]
 
     def test_no_bases_returns_self(self, db):
         _upsert_class(db, "c1", "Standalone", "Standalone")
         mro = compute_class_mro(db, "c1")
         assert mro == ["Standalone"]
+
+    def test_missing_base_rows_are_incomplete(self, db):
+        _upsert_class(db, "c1", "Child", "Child", parent_classes=["Base"])
+        assert compute_class_mro(db, "c1") is None
+
+    def test_resolving_class_without_bases_clears_stale_rows(self, db):
+        _upsert_class(db, "c1", "Standalone", "Standalone")
+        upsert_class_bases(
+            db,
+            "c1",
+            [{"base_full_path": "OldBase", "is_resolved": False}],
+        )
+
+        record = dict(db.execute("SELECT * FROM entities WHERE id = 'c1'").fetchone())
+        resolve_all_inherits(db, [record])
+
+        assert (
+            db.execute(
+                "SELECT 1 FROM class_bases WHERE class_entity_id = 'c1'"
+            ).fetchone()
+            is None
+        )
 
     def test_memoization_prevents_redundant_work(self, db):
         _upsert_class(db, "c1", "Base", "Base")

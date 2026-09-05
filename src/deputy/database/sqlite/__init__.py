@@ -1,5 +1,6 @@
 from .main import (
     clean_orphan_entities,
+    clean_stale_inheritance_rows,
     content_hash_exists,
     delete_branch_entities,
     delete_branch_entities_by_entity_ids,
@@ -43,6 +44,7 @@ from .symbol_cache import SqliteSymbolCache
 __all__ = [
     "SqliteSymbolCache",
     "clean_orphan_entities",
+    "clean_stale_inheritance_rows",
     "content_hash_exists",
     "delete_branch_entities",
     "delete_branch_entities_by_entity_ids",

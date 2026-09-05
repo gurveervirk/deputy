@@ -12,6 +12,7 @@ from deputy._version import __version__
 from deputy.core import create_context
 from deputy.database.sqlite import (
     clean_orphan_entities,
+    clean_stale_inheritance_rows,
     delete_branch_entities,
     delete_branch_file,
     delete_dependency,
@@ -38,6 +39,7 @@ from deputy.database.sqlite import (
 )
 from deputy.logger import get_logger
 from deputy.tools.inheritance import (
+    clean_inherited_member_entities,
     eager_resolve_all_inherited_members,
     get_class_inheritance_info,
     resolve_all_inherits,
@@ -126,12 +128,13 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
 
     records, _ = _process_files(ctx, files, base_path)
 
+    clean_inherited_member_entities(conn, branch=branch)
     delete_branch_entities(conn, branch)
 
     for record in records:
         upsert_entity(conn, **record)
 
-    resolve_all_inherits(conn, records)
+    resolve_all_inherits(conn, records, branch=branch)
 
     for record in records:
         if record["type"] == "CLASS":
@@ -143,6 +146,7 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     upsert_branch_entities(conn, branch, dep_ids)
 
     clean_orphan_entities(conn)
+    clean_stale_inheritance_rows(conn, branch_name=branch)
 
     for d in deleted:
         delete_branch_file(conn, branch, d)

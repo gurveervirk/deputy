@@ -6,6 +6,7 @@ from deproc.plugins.python.utils.mro import compute_mro_from_bases
 
 from deputy.database.sqlite import (
     delete_class_bases_by_class,
+    get_branch_entities,
     get_direct_bases,
     get_entities_by_ids,
     get_entities_by_path,
@@ -165,6 +166,7 @@ def has_multiple_candidates(candidates: list[dict]) -> bool:
 def resolve_all_inherits(
     conn: sqlite3.Connection,
     records: list[dict],
+    branch: str | None = None,
 ) -> None:
     """Resolve base classes for all CLASS records and write results to class_bases table."""
     class_records = [r for r in records if r["type"] == "CLASS"]
@@ -172,10 +174,27 @@ def resolve_all_inherits(
     for record in class_records:
         meta = json.loads(record["metadata_json"])
         parent_classes = meta.get("parent_classes", [])
+        class_entity_id = record["id"]
+        delete_class_bases_by_class(conn, class_entity_id)
+        if branch is not None:
+            if parent_classes:
+                placeholders = ",".join("?" for _ in parent_classes)
+                conn.execute(
+                    f"""DELETE FROM inheritance_pins
+                        WHERE class_entity_id = ? AND branch_name = ?
+                        AND base_name NOT IN ({placeholders})""",
+                    (class_entity_id, branch, *parent_classes),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM inheritance_pins WHERE class_entity_id = ? AND branch_name = ?",
+                    (class_entity_id, branch),
+                )
         if not parent_classes:
+            meta["resolved_bases"] = []
+            record["metadata_json"] = json.dumps(meta, default=str)
             continue
 
-        class_entity_id = record["id"]
         class_lineno = meta.get("lineno")
 
         module_fqn = get_containing_module_fqn(conn, class_entity_id)
@@ -307,10 +326,59 @@ def resolve_all_inherits(
         record["metadata_json"] = json.dumps(meta, default=str)
 
 
-def clean_inherited_member_entities(conn: sqlite3.Connection) -> None:
-    """Delete all INHERITED_MEMBER synthetic entities from the database."""
+def clean_inherited_member_entities(
+    conn: sqlite3.Connection,
+    branch: str | None = None,
+    class_entity_ids: list[str] | None = None,
+) -> None:
+    if branch is None:
+        rows = conn.execute(
+            "SELECT id FROM entities WHERE json_extract(metadata_json, '$.inherited') = 1"
+        ).fetchall()
+        ids = [row["id"] for row in rows]
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                f"DELETE FROM branch_entities WHERE entity_id IN ({placeholders})",
+                ids,
+            )
+            conn.execute(f"DELETE FROM entities WHERE id IN ({placeholders})", ids)
+        return
+
+    if class_entity_ids:
+        placeholders = ",".join("?" for _ in class_entity_ids)
+        rows = conn.execute(
+            f"""SELECT DISTINCT e.id
+                FROM entities e
+                LEFT JOIN branch_entities be ON be.entity_id = e.id
+                    AND be.branch_name = ?
+                WHERE json_extract(e.metadata_json, '$.inherited') = 1
+                  AND (be.entity_id IS NOT NULL
+                       OR e.parent_id IN ({placeholders}))""",
+            (branch, *class_entity_ids),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT DISTINCT e.id
+                FROM entities e
+                JOIN branch_entities be ON be.entity_id = e.id
+                WHERE json_extract(e.metadata_json, '$.inherited') = 1
+                  AND be.branch_name = ?""",
+            (branch,),
+        ).fetchall()
+    ids = [row["id"] for row in rows]
+    if not ids:
+        return
+    placeholders = ",".join("?" for _ in ids)
     conn.execute(
-        "DELETE FROM entities WHERE json_extract(metadata_json, '$.inherited') = 1"
+        f"DELETE FROM branch_entities WHERE branch_name = ? AND entity_id IN ({placeholders})",
+        (branch, *ids),
+    )
+    conn.execute(
+        f"""DELETE FROM entities
+            WHERE id IN ({placeholders})
+              AND id NOT IN (SELECT entity_id FROM branch_entities)""",
+        ids,
     )
 
 
@@ -328,7 +396,7 @@ def _create_inherited_base_aliases(
 
         class_fqn = record["full_path"]
         class_entity_id = record["id"]
-        mro = compute_class_mro(conn, class_entity_id)
+        mro = _compute_partial_class_mro(conn, class_entity_id)
         if mro is None or len(mro) < 2:
             continue
 
@@ -473,7 +541,7 @@ def _create_inherited_inner_class_aliases(
 
         class_fqn = record["full_path"]
         class_entity_id = record["id"]
-        mro = compute_class_mro(conn, class_entity_id)
+        mro = _compute_partial_class_mro(conn, class_entity_id)
         if mro is None or len(mro) < 2:
             continue
 
@@ -564,10 +632,21 @@ def eager_resolve_all_inherited_members(
         branch = os.environ.get("DEPUTY_BRANCH", "default")
 
     if records is None:
-        rows = conn.execute("SELECT * FROM entities WHERE type = 'CLASS'").fetchall()
-        records = [dict(r) for r in rows]
+        if branch:
+            records = [
+                entity
+                for entity in get_branch_entities(conn, branch)
+                if entity["type"] == "CLASS"
+            ]
+        else:
+            rows = conn.execute(
+                "SELECT * FROM entities WHERE type = 'CLASS'"
+            ).fetchall()
+            records = [dict(r) for r in rows]
 
-    clean_inherited_member_entities(conn)
+    clean_inherited_member_entities(
+        conn, branch=branch, class_entity_ids=[r["id"] for r in records]
+    )
 
     pass1 = _create_inherited_base_aliases(conn, records, branch)
     logger.debug("eager resolution pass 1: %d synthetic entities created", len(pass1))
@@ -583,13 +662,12 @@ def eager_resolve_all_inherited_members(
         conn.commit()
 
 
-def compute_class_mro(
+def _compute_mro_parts(
     conn: sqlite3.Connection,
     class_entity_id: str,
-    memo: dict[str, list[str] | None] | None = None,
+    memo: dict[str, tuple[list[str] | None, bool]] | None = None,
     _visiting: set[str] | None = None,
-) -> list[str] | None:
-    """Compute the C3 linearization MRO for a class. Returns None if any base in the prefix is unresolvable."""
+) -> tuple[list[str] | None, bool]:
     if memo is None:
         memo = {}
     if _visiting is None:
@@ -600,12 +678,11 @@ def compute_class_mro(
 
     if class_entity_id in _visiting:
         logger.warning("cycle detected in MRO for entity %s", class_entity_id)
-        memo[class_entity_id] = None
-        return None
+        return None, False
 
     entity = get_entity_by_id(conn, class_entity_id)
     if not entity or entity["type"] != "CLASS":
-        return None
+        return None, False
 
     _visiting.add(class_entity_id)
 
@@ -616,15 +693,16 @@ def compute_class_mro(
     parent_classes = meta.get("parent_classes", [])
     if not parent_classes:
         result = [entity["full_path"]]
-        memo[class_entity_id] = result
+        memo[class_entity_id] = (result, True)
         _visiting.discard(class_entity_id)
-        return result
+        return result, True
 
     branch = get_current_branch()
     direct_bases = get_direct_bases(conn, class_entity_id)
 
     resolved_prefix: list[dict] = []
     base_mros: list[list[str]] = []
+    complete = len(direct_bases) == len(parent_classes)
 
     for base in direct_bases:
         if base.get("is_resolved"):
@@ -639,30 +717,39 @@ def compute_class_mro(
             )
             if pin:
                 pinned_entity = get_entity_by_id(conn, pin["pinned_entity_id"])
-                pinned_fqn = (
-                    pinned_entity["full_path"]
-                    if pinned_entity
-                    else base["base_full_path"]
-                )
-                base_full_path = pinned_fqn
-                base_entity_id = pin["pinned_entity_id"]
+                if pinned_entity and pinned_entity["type"] == "CLASS":
+                    base_full_path = pinned_entity["full_path"]
+                    base_entity_id = pin["pinned_entity_id"]
+                else:
+                    complete = False
+                    break
             else:
+                complete = False
                 break
 
-        base_mro = compute_class_mro(conn, base_entity_id, memo, _visiting)
+        base_mro, base_complete = _compute_mro_parts(
+            conn, base_entity_id, memo, _visiting
+        )
         if base_mro is None:
+            complete = False
             break
 
         resolved_prefix.append(
             {"base_full_path": base_full_path, "base_entity_id": base_entity_id}
         )
         base_mros.append(base_mro)
+        if not base_complete:
+            complete = False
+            break
+
+    if len(resolved_prefix) != len(direct_bases):
+        complete = False
 
     if not resolved_prefix:
         result = [entity["full_path"]]
-        memo[class_entity_id] = result
+        memo[class_entity_id] = (result, complete)
         _visiting.discard(class_entity_id)
-        return result
+        return result, complete
 
     base_mro_dict: dict[str, list[str] | None] = {
         str(b["base_full_path"]): base_mros[i] for i, b in enumerate(resolved_prefix)
@@ -672,10 +759,42 @@ def compute_class_mro(
     result = compute_mro_from_bases(entity["full_path"], base_mro_dict, base_fqns)
     if result is None:
         logger.warning("inconsistent MRO for %s", entity["full_path"])
+        complete = False
 
-    memo[class_entity_id] = result
+    if result is None:
+        result = [entity["full_path"]]
+    memo[class_entity_id] = (result, complete)
     _visiting.discard(class_entity_id)
+    return result, complete
+
+
+def _compute_partial_class_mro(
+    conn: sqlite3.Connection, class_entity_id: str
+) -> list[str] | None:
+    result, _ = _compute_mro_parts(conn, class_entity_id)
     return result
+
+
+def compute_class_mro(
+    conn: sqlite3.Connection,
+    class_entity_id: str,
+    memo: dict[str, list[str] | None] | None = None,
+    _visiting: set[str] | None = None,
+) -> list[str] | None:
+    if memo is not None and class_entity_id in memo:
+        return memo[class_entity_id]
+    parts_memo = (
+        {entity_id: (value, value is not None) for entity_id, value in memo.items()}
+        if memo is not None
+        else None
+    )
+    result, complete = _compute_mro_parts(
+        conn, class_entity_id, memo=parts_memo, _visiting=_visiting
+    )
+    if memo is not None:
+        for entity_id, (partial, is_complete) in (parts_memo or {}).items():
+            memo[entity_id] = partial if is_complete else None
+    return result if complete else None
 
 
 def get_inherited_members(
