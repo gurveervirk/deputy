@@ -1,7 +1,10 @@
 from unittest.mock import patch
 
+import pytest
+
 from deputy.database.sqlite import (
     clean_orphan_entities,
+    clean_stale_inheritance_rows,
     delete_branch_entities,
     delete_branch_file,
     delete_class_bases_by_class,
@@ -673,19 +676,35 @@ class TestClassBases:
 
 
 class TestInheritancePins:
+    def _add_target(self, db, entity_id="entity_a", entity_type="CLASS"):
+        upsert_entity(
+            db,
+            id=entity_id,
+            language="python",
+            full_path=f"pkg.{entity_id}",
+            name=entity_id,
+            type=entity_type,
+            metadata_json="{}",
+        )
+
     def test_upsert_and_get(self, db):
+        self._add_target(db)
         upsert_inheritance_pin(db, "class1", "Base", "entity_a", "main")
         pin = get_inheritance_pin(db, "class1", "Base", "main")
         assert pin is not None
         assert pin["pinned_entity_id"] == "entity_a"
 
     def test_replaces_on_reupsert(self, db):
+        self._add_target(db, "old")
+        self._add_target(db, "new")
         upsert_inheritance_pin(db, "class1", "Base", "old", "main")
         upsert_inheritance_pin(db, "class1", "Base", "new", "main")
         pin = get_inheritance_pin(db, "class1", "Base", "main")
         assert pin["pinned_entity_id"] == "new"
 
     def test_isolated_by_branch(self, db):
+        self._add_target(db, "entity_a")
+        self._add_target(db, "entity_b")
         upsert_inheritance_pin(db, "class1", "Base", "entity_a", "main")
         upsert_inheritance_pin(db, "class1", "Base", "entity_b", "other")
         pin_main = get_inheritance_pin(db, "class1", "Base", "main")
@@ -694,6 +713,7 @@ class TestInheritancePins:
         assert pin_other["pinned_entity_id"] == "entity_b"
 
     def test_delete(self, db):
+        self._add_target(db)
         upsert_inheritance_pin(db, "class1", "Base", "entity_a", "main")
         delete_inheritance_pin(db, "class1", "Base", "main")
         assert get_inheritance_pin(db, "class1", "Base", "main") is None
@@ -702,12 +722,42 @@ class TestInheritancePins:
         assert get_inheritance_pin(db, "nonexistent", "Base", "main") is None
 
     def test_list_pins(self, db, sample_entities):
+        self._add_target(db, "e1")
+        self._add_target(db, "e2")
         upsert_inheritance_pin(db, "id1", "Base", "e1", "main")
         upsert_inheritance_pin(db, "id5", "Mixin", "e2", "main")
         pins = list_inheritance_pins(db, "main")
         assert len(pins) == 2
         paths = {p["class_full_path"] for p in pins}
         assert paths == {"pkg.mod.ClassA", "pkg.mod2"}
+
+    def test_rejects_non_class_target(self, db):
+        self._add_target(db, "function", entity_type="FUNCTION")
+        with pytest.raises(ValueError, match="CLASS"):
+            upsert_inheritance_pin(db, "class1", "Base", "function", "main")
+
+    def test_cleans_stale_branch_pin_and_rows(self, db):
+        self._add_target(db, "class1")
+        self._add_target(db, "base")
+        upsert_branch_entities(db, "main", ["class1"])
+        upsert_inheritance_pin(db, "class1", "Base", "base", "main")
+        upsert_class_bases(
+            db,
+            "class1",
+            [
+                {
+                    "base_full_path": "pkg.base",
+                    "base_entity_id": "base",
+                    "is_resolved": True,
+                }
+            ],
+        )
+
+        delete_branch_entities(db, "main")
+        clean_stale_inheritance_rows(db, "main")
+
+        assert get_inheritance_pin(db, "class1", "Base", "main") is None
+        assert get_direct_bases(db, "class1") == []
 
     def test_list_pins_empty_branch(self, db):
         assert list_inheritance_pins(db, "nonexistent") == []

@@ -589,20 +589,27 @@ def pin_inheritance(
                     pinned_entity = get_entity_by_id(conn, pin["pinned_entity_id"])
                     if pinned_entity:
                         conn.execute(
+                            """DELETE FROM class_bases
+                               WHERE class_entity_id = ?
+                               AND (base_full_path = ? OR base_entity_id = ?)""",
+                            (eid, pinned_entity["full_path"], pin["pinned_entity_id"]),
+                        )
+                    else:
+                        conn.execute(
                             "DELETE FROM class_bases WHERE class_entity_id = ? AND base_full_path = ?",
-                            (eid, pinned_entity["full_path"]),
+                            (eid, base_name),
                         )
-                        upsert_class_bases(
-                            conn,
-                            eid,
-                            [
-                                {
-                                    "base_full_path": base_name,
-                                    "base_entity_id": None,
-                                    "is_resolved": False,
-                                }
-                            ],
-                        )
+                    upsert_class_bases(
+                        conn,
+                        eid,
+                        [
+                            {
+                                "base_full_path": base_name,
+                                "base_entity_id": None,
+                                "is_resolved": False,
+                            }
+                        ],
+                    )
                 delete_inheritance_pin(conn, eid, base_name, branch)
                 console.print(f"[green]Removed pin for[/green] {class_fqn}:{base_name}")
                 break
@@ -697,6 +704,7 @@ def pin_inheritance(
         raise typer.Exit(code=1)
     alias_meta = json.loads(import_alias_entity["metadata_json"])
     import_stmt = get_entity_by_id(conn, import_alias_entity["parent_id"])
+    target_entity = None
     if import_stmt:
         import_path = import_stmt.get("name", "")
         original_name = alias_meta.get("original_name", "")
@@ -708,12 +716,11 @@ def pin_inheritance(
             if te and te["type"] == "CLASS":
                 target_entity = te
                 break
-        if target_entity:
-            pinned_entity_id = target_entity["id"]
-        else:
-            pinned_entity_id = import_alias_entity["id"]
-    else:
-        pinned_entity_id = import_alias_entity["id"]
+    if target_entity is None:
+        conn.close()
+        console.print(f"[red]Entity at {entity_ref} does not resolve to a class[/red]")
+        raise typer.Exit(code=1)
+    pinned_entity_id = target_entity["id"]
     upsert_inheritance_pin(conn, class_entity_id, base_name, pinned_entity_id, branch)
     conn.execute(
         "DELETE FROM class_bases WHERE class_entity_id = ? AND base_full_path = ?",
