@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from deproc.core.context import Context
+from deproc.core.interfaces.resolver import ResolutionStatus
 from deproc.plugins.java.parser.models import JavaCompilationUnit
 from deproc.plugins.java.utils.serialization import (
     record_to_entity as java_record_to_entity,
@@ -20,9 +21,12 @@ from deputy.database.sqlite import get_branch_entities
 @dataclass(frozen=True)
 class DeprocResolutionResult:
     language: str
+    status: ResolutionStatus | None = None
+    reason: str | None = None
     resolved: tuple[dict, ...] = ()
     unresolved: tuple[dict, ...] = ()
     inaccessible: tuple[dict, ...] = ()
+    ambiguous: tuple[dict, ...] = ()
 
 
 class DeprocResolutionAdapter:
@@ -42,11 +46,7 @@ class DeprocResolutionAdapter:
                 self.context.entity_registry.add(entity)
 
     def _record_to_entity(self, record: dict):
-        if record["language"] == "python":
-            return python_record_to_entity(record)
-        if record["language"] == "java":
-            return java_record_to_entity(record)
-        return None
+        return _record_to_entity(record)
 
     def _infer_language(self, module_fqn: str) -> str | None:
         for entity_id in self.context.entity_registry.get_ids_by_fqn(module_fqn):
@@ -88,13 +88,62 @@ class DeprocResolutionAdapter:
             return DeprocResolutionResult(language=selected_language)
 
         result = resolver.resolve(module_fqn, symbol_name, self.context)
+        status = getattr(result, "status", None) or (
+            ResolutionStatus.RESOLVED
+            if result.resolved_ids
+            else ResolutionStatus.UNRESOLVED
+        )
+        assert isinstance(status, ResolutionStatus)
         return DeprocResolutionResult(
             language=selected_language,
+            status=status,
+            reason=getattr(result, "reason", None),
             resolved=self._records(result.resolved_ids),
             unresolved=self._records(result.unresolved_ids),
             inaccessible=self._records(getattr(result, "inaccessible_ids", set())),
+            ambiguous=self._records(getattr(result, "ambiguous_ids", set())),
+        )
+
+    def resolve_type_reference(
+        self,
+        owner_entity_id: str,
+        raw_name: str,
+    ) -> DeprocResolutionResult:
+        """Resolve a Java type reference (superclass/interface) using the deproc resolver."""
+        resolver = self.context.get_resolver("java")
+        resolve_type_reference = getattr(resolver, "resolve_type_reference", None)
+        owner = self.context.entity_registry.get(owner_entity_id)
+        if resolve_type_reference is None or owner is None:
+            return DeprocResolutionResult(
+                language="java", status=ResolutionStatus.UNRESOLVED
+            )
+        result = resolve_type_reference(raw_name, owner, self.context)
+        return DeprocResolutionResult(
+            language="java",
+            status=result.status,
+            reason=result.reason,
+            resolved=self._records({result.value} if result.value else set()),
+            ambiguous=self._records(set(result.candidates)),
         )
 
 
 def load_context(conn: sqlite3.Connection, branch_name: str) -> Context:
     return DeprocResolutionAdapter(conn, branch_name).context
+
+
+def _record_to_entity(record: dict):
+    if record["language"] == "python":
+        return python_record_to_entity(record)
+    if record["language"] == "java":
+        return java_record_to_entity(record)
+    return None
+
+
+def build_context_from_records(records: list[dict]) -> Context:
+    """Rehydrate parsed records into a fresh deproc context (no DB dependency)."""
+    ctx = create_context("", None, enable_cache=False)
+    for record in records:
+        entity = _record_to_entity(record)
+        if entity is not None:
+            ctx.entity_registry.add(entity)
+    return ctx

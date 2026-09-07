@@ -140,12 +140,25 @@ class InteractiveResolver:
             raise ValueError("branch_name is required for the deproc backend")
 
         result = self.deproc_adapter.resolve(module_fqn, symbol_name)
+        if result.status == "ambiguous" or len(result.ambiguous) > 1:
+            self.console.print(
+                f"[yellow]Ambiguous entity:[/yellow] {module_fqn}.{symbol_name}"
+            )
+            reason = result.reason or "Multiple candidates found"
+            self.console.print(f"[dim]{reason}[/dim]")
+            candidates = list(result.ambiguous) or list(result.resolved)
+            if not candidates:
+                return None
+            return self._prompt_for_concrete(candidates)
+        if result.status == "inaccessible" or result.inaccessible:
+            self.console.print(
+                f"[red]Inaccessible entity:[/red] {module_fqn}.{symbol_name}"
+            )
+            if result.reason:
+                self.console.print(f"[dim]{result.reason}[/dim]")
+            return None
         if not result.resolved:
-            if result.inaccessible:
-                self.console.print(
-                    f"[red]Inaccessible entity:[/red] {module_fqn}.{symbol_name}"
-                )
-            elif result.unresolved:
+            if result.unresolved:
                 self.console.print(
                     f"[yellow]Unresolved entity:[/yellow] {module_fqn}.{symbol_name}"
                 )
@@ -153,6 +166,8 @@ class InteractiveResolver:
                 self.console.print(
                     f"[red]Entity not found:[/red] {module_fqn}.{symbol_name}"
                 )
+            if result.reason:
+                self.console.print(f"[dim]{result.reason}[/dim]")
             return None
 
         step = ResolveStep(
