@@ -2,6 +2,7 @@ import contextlib
 import json
 import sqlite3
 
+from deproc.core.interfaces.resolver import ResolutionStatus
 from deproc.plugins.python.utils.mro import compute_mro_from_bases
 
 from deputy.database.sqlite import (
@@ -18,6 +19,7 @@ from deputy.database.sqlite import (
     upsert_entity,
 )
 from deputy.logger import get_logger
+from deputy.tools.deproc_resolution import build_context_from_records
 from deputy.tools.utils import (
     get_containing_module_fqn,
     get_parent_id,
@@ -163,13 +165,154 @@ def has_multiple_candidates(candidates: list[dict]) -> bool:
     return len(module_level) > 1
 
 
+def _java_base_names(record: dict) -> list[str]:
+    meta = {}
+    with contextlib.suppress(json.JSONDecodeError, TypeError):
+        meta = json.loads(record["metadata_json"])
+    if record["type"] == "INTERFACE":
+        return list(meta.get("extends_interfaces", []))
+    names = list(meta.get("implements", []))
+    superclass = meta.get("superclass")
+    if superclass:
+        names.insert(0, superclass)
+    return names
+
+
+def _java_base_branch_info(
+    status: ResolutionStatus, reason: str | None, candidates
+) -> str:
+    info = {
+        "status": status.value,
+        "reason": reason,
+        "candidates": [
+            {"full_path": fqn, "entity_id": entity_id} for entity_id, fqn in candidates
+        ],
+    }
+    return json.dumps(info, default=str)
+
+
+def resolve_java_type_references(
+    conn: sqlite3.Connection,
+    records: list[dict],
+    branch: str | None = None,
+) -> None:
+    """Resolve Java superclass/interface type references via deproc and persist class_bases."""
+    java_type_records = [
+        r
+        for r in records
+        if r.get("language") == "java"
+        and r["type"] in ("CLASS", "INTERFACE", "ENUM", "RECORD")
+    ]
+    if not java_type_records:
+        return
+
+    ctx = build_context_from_records(records)
+    resolver = ctx.get_resolver("java")
+    resolve_type_reference = getattr(resolver, "resolve_type_reference", None)
+    if resolve_type_reference is None:
+        logger.warning("no Java resolver available for type reference resolution")
+        return
+
+    registry = ctx.entity_registry
+
+    for record in java_type_records:
+        entity = registry.get(record["id"])
+        if entity is None:
+            continue
+        base_names = _java_base_names(record)
+        class_entity_id = record["id"]
+        delete_class_bases_by_class(conn, class_entity_id)
+
+        if branch is not None:
+            if base_names:
+                placeholders = ",".join("?" for _ in base_names)
+                conn.execute(
+                    f"""DELETE FROM inheritance_pins
+                        WHERE class_entity_id = ? AND branch_name = ?
+                        AND base_name NOT IN ({placeholders})""",
+                    (class_entity_id, branch, *base_names),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM inheritance_pins WHERE class_entity_id = ? AND branch_name = ?",
+                    (class_entity_id, branch),
+                )
+
+        if not base_names:
+            resolved_bases: list[dict] = []
+        else:
+            resolved_bases = []
+            for base_name in base_names:
+                result = resolve_type_reference(base_name, entity, ctx)
+                if (
+                    result.status == ResolutionStatus.RESOLVED
+                    and result.value is not None
+                ):
+                    target = registry.get(result.value)
+                    target_fqn = getattr(target, "fqn", None) or base_name
+                    resolved_bases.append(
+                        {
+                            "base_full_path": target_fqn,
+                            "base_entity_id": result.value,
+                            "is_resolved": True,
+                            "branch_info": None,
+                        }
+                    )
+                else:
+                    candidate_fqns = []
+                    for candidate_id in result.candidates:
+                        candidate = registry.get(candidate_id)
+                        candidate_fqns.append(
+                            (candidate_id, getattr(candidate, "fqn", None) or base_name)
+                        )
+                    resolved_bases.append(
+                        {
+                            "base_full_path": base_name,
+                            "base_entity_id": None,
+                            "is_resolved": False,
+                            "branch_info": _java_base_branch_info(
+                                result.status, result.reason, candidate_fqns
+                            ),
+                        }
+                    )
+
+        upsert_class_bases(conn, class_entity_id, resolved_bases)
+
+        resolved_bases_meta = []
+        for i, base_name in enumerate(base_names):
+            entry = resolved_bases[i] if i < len(resolved_bases) else None
+            if entry:
+                resolved_bases_meta.append(
+                    {
+                        "name": base_name,
+                        "full_path": entry["base_full_path"]
+                        if entry["is_resolved"]
+                        else None,
+                        "entity_id": entry["base_entity_id"]
+                        if entry["is_resolved"]
+                        else None,
+                        "is_resolved": entry["is_resolved"],
+                    }
+                )
+        meta = {}
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
+            meta = json.loads(record["metadata_json"])
+        meta["resolved_bases"] = resolved_bases_meta
+        meta["parent_classes"] = base_names
+        record["metadata_json"] = json.dumps(meta, default=str)
+
+
 def resolve_all_inherits(
     conn: sqlite3.Connection,
     records: list[dict],
     branch: str | None = None,
 ) -> None:
     """Resolve base classes for all CLASS records and write results to class_bases table."""
-    class_records = [r for r in records if r["type"] == "CLASS"]
+    resolve_java_type_references(conn, records, branch=branch)
+
+    class_records = [
+        r for r in records if r["type"] == "CLASS" and r.get("language") == "python"
+    ]
 
     for record in class_records:
         meta = json.loads(record["metadata_json"])
@@ -516,7 +659,7 @@ def _create_synthetic_entity(
 
     syn_record = {
         "id": alias_full_path,
-        "language": "python",
+        "language": target.get("language", "python"),
         "full_path": alias_full_path,
         "name": own_name,
         "type": "INHERITED_MEMBER",
