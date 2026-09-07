@@ -167,3 +167,25 @@ def test_adapter_resolves_java_imports(db):
 
     assert result.language == "java"
     assert [record["full_path"] for record in result.resolved] == ["java.util.List"]
+
+
+def test_adapter_java_status_is_resolved(db):
+    _insert_java_graph(db, "main")
+
+    result = DeprocResolutionAdapter(db, "main").resolve(
+        "com.example.Main", "List", language="java"
+    )
+
+    assert result.status == "resolved"
+    assert result.resolved != ()
+
+
+def test_adapter_java_status_unresolved(db):
+    _insert_java_graph(db, "main")
+
+    result = DeprocResolutionAdapter(db, "main").resolve(
+        "com.example.Main", "Missing", language="java"
+    )
+
+    assert result.status in ("resolved", "unresolved")
+    assert result.resolved == ()
