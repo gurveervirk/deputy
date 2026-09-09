@@ -137,7 +137,10 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     resolve_all_inherits(conn, records, branch=branch)
 
     for record in records:
-        if record["type"] == "CLASS":
+        if record["type"] == "CLASS" or (
+            record.get("language") == "java"
+            and record["type"] in ("INTERFACE", "ENUM", "RECORD")
+        ):
             upsert_entity(conn, **record)
 
     eager_resolve_all_inherited_members(conn, records, branch)

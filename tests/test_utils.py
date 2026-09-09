@@ -76,7 +76,14 @@ class TestEntityRecord:
         assert record["type"] == "CLASS"
 
     def test_module(self):
-        entity = MagicMock(spec=PythonModule)
+        entity = MagicMock(
+            spec=PythonModule,
+            import_stmt_ids=[],
+            type_ids=[],
+            function_ids=[],
+            variable_ids=[],
+            control_flow_group_ids=[],
+        )
         entity.fqn = "pkg.mod"
         entity.path = "pkg/mod.py"
         entity.all_exports = None
