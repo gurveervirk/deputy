@@ -5,6 +5,34 @@ on:
     tags: ['v*']
 
 jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - name: Validate release version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python - "$TAG_NAME" <<'PY'
+          import pathlib
+          import sys
+          import tomllib
+
+          tag_name = sys.argv[1]
+          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]
+          version = project["version"]
+          if tag_name != f"v{version}":
+              raise SystemExit(
+                  f"Version mismatch: tag is {tag_name!r}, metadata has {version!r}"
+              )
+          version_source = pathlib.Path("src/deputy/_version.py").read_text()
+          if f'__version__ = "{version}"' not in version_source:
+              raise SystemExit("src/deputy/_version.py does not match pyproject.toml")
+          PY
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -18,8 +46,43 @@ jobs:
       - run: uv sync
       - run: uv run pytest
 
+  clean-install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build Deputy wheel
+        run: uv build --wheel --out-dir "$RUNNER_TEMP/deputy-dist"
+      - name: Create clean environment and install wheel
+        run: |
+          uv venv --python "${{ matrix.python-version }}" "$RUNNER_TEMP/deputy-clean"
+          uv pip install --no-sources \
+            --python "$RUNNER_TEMP/deputy-clean/bin/python" \
+            "$RUNNER_TEMP/deputy-dist"/deputy_cli-*.whl pytest
+      - name: Verify installed APIs and CLI
+        env:
+          EXPECTED_VERSION: ${{ github.ref_name }}
+        run: |
+          "$RUNNER_TEMP/deputy-clean/bin/python" -c 'import os; from importlib.metadata import version; from deproc.core.interfaces.resolver import ResolutionStatus; from deproc.core.scope import AnalysisScope; from deproc.plugins.java import JavaResolver; import deputy.tools.deproc_resolution; assert version("deputy-cli") == os.environ["EXPECTED_VERSION"][1:]; assert hasattr(JavaResolver, "resolve_type_reference"); print(ResolutionStatus.RESOLVED, AnalysisScope, "clean-install-ok")'
+          "$RUNNER_TEMP/deputy-clean/bin/deputy" --help
+      - name: Run tests against installed wheel
+        run: |
+          cp -R tests "$RUNNER_TEMP/deputy-tests"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/deputy-clean/bin/python" -m pytest "$RUNNER_TEMP/deputy-tests" -q
+
   publish:
-    needs: test
+    needs: [validate-release, test, clean-install]
     runs-on: ubuntu-latest
     environment: pypi-deputy
     permissions:
