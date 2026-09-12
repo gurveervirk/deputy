@@ -181,10 +181,6 @@ def _java_base_relationships(record: dict) -> list[tuple[str, str]]:
     return relationships
 
 
-def _java_base_names(record: dict) -> list[str]:
-    return [name for name, _ in _java_base_relationships(record)]
-
-
 def _java_base_branch_info(
     status: ResolutionStatus, reason: str | None, candidates
 ) -> str:
