@@ -7,6 +7,7 @@ from deputy.database.sqlite import (
     get_branch_entities,
     get_direct_bases,
     get_direct_implementations,
+    get_direct_subclasses,
     get_direct_subinterfaces,
     get_entity_by_id,
     get_entity_ids_by_fqn,
@@ -316,6 +317,122 @@ class TestJavaTypeReferenceEndToEnd:
         assert {row["id"] for row in implementors} == {worker_id, data_id, kind_id}
         subinterfaces = get_direct_subinterfaces(conn, "com.example.Marker", "main")
         assert {row["id"] for row in subinterfaces} == {child_marker_id}
+        assert get_direct_subclasses(conn, "com.example.Marker", "main") == []
+        conn.close()
+
+    def test_run_sync_migrates_legacy_java_relation_kinds_without_file_changes(
+        self, tmp_path, monkeypatch
+    ):
+        project = tmp_path / "project"
+        project.mkdir()
+        db_path = tmp_path / "deputy.db"
+
+        conn = open_database(str(db_path))
+        init_schema(conn)
+        set_config(conn, "base_path", str(project))
+        conn.execute("DROP TABLE class_bases")
+        conn.execute(
+            """CREATE TABLE class_bases (
+                class_entity_id TEXT NOT NULL,
+                base_full_path TEXT NOT NULL,
+                base_entity_id TEXT,
+                is_resolved INTEGER NOT NULL DEFAULT 0,
+                branch_info TEXT,
+               PRIMARY KEY (class_entity_id, base_full_path)
+            )"""
+        )
+        entities = [
+            (
+                "marker",
+                "com.example.Marker",
+                "Marker",
+                "INTERFACE",
+                {},
+            ),
+            (
+                "base",
+                "com.example.Base",
+                "Base",
+                "CLASS",
+                {},
+            ),
+            (
+                "worker",
+                "com.example.Worker",
+                "Worker",
+                "CLASS",
+                {"implements": ["com.example.Marker"]},
+            ),
+            (
+                "child",
+                "com.example.Child",
+                "Child",
+                "CLASS",
+                {"superclass": "com.example.Base"},
+            ),
+            (
+                "child_marker",
+                "com.example.ChildMarker",
+                "ChildMarker",
+                "INTERFACE",
+                {"extends_interfaces": ["com.example.Marker"]},
+            ),
+        ]
+        for entity_id, full_path, name, entity_type, metadata in entities:
+            upsert_entity(
+                conn,
+                id=entity_id,
+                language="java",
+                full_path=full_path,
+                name=name,
+                type=entity_type,
+                metadata_json=json.dumps(metadata),
+            )
+        upsert_branch_entities(conn, "main", [entity[0] for entity in entities])
+        legacy_relations = [
+            ("worker", "com.example.Marker", "marker"),
+            ("child", "com.example.Base", "base"),
+            ("child_marker", "com.example.Marker", "marker"),
+        ]
+        conn.executemany(
+            """INSERT INTO class_bases
+               (class_entity_id, base_full_path, base_entity_id, is_resolved, branch_info)
+               VALUES (?, ?, ?, ?, ?)""",
+            [
+                (owner, base, target, 1, None)
+                for owner, base, target in legacy_relations
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr("deputy.tools.utils._resolve_db_path", lambda: str(db_path))
+        monkeypatch.setattr("deputy.tools.core.get_current_branch", lambda: "main")
+
+        run_sync(force=False, sync_deps=False)
+
+        conn = open_database(str(db_path))
+        relation_kinds = {
+            owner: get_direct_bases(conn, owner)[0]["relation_kind"]
+            for owner, _, _ in legacy_relations
+        }
+        assert relation_kinds == {
+            "worker": "implements",
+            "child": "extends",
+            "child_marker": "interface_extends",
+        }
+        assert {
+            row["id"]
+            for row in get_direct_implementations(conn, "com.example.Marker", "main")
+        } == {"worker"}
+        assert {
+            row["id"] for row in get_direct_subclasses(conn, "com.example.Base", "main")
+        } == {"child"}
+        assert {
+            row["id"]
+            for row in get_direct_subinterfaces(conn, "com.example.Marker", "main")
+        } == {"child_marker"}
+        assert get_direct_subclasses(conn, "com.example.Marker", "main") == []
         conn.close()
 
     def test_interactive_resolver_uses_deproc_backend(self, db):

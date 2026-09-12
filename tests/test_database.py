@@ -752,7 +752,7 @@ class TestClassBases:
             get_direct_implementations(db, "pkg.Interface")[0]["id"] == "implementation"
         )
         assert get_direct_subinterfaces(db, "pkg.Interface")[0]["id"] == "subinterface"
-        assert get_direct_subclasses(db, "pkg.Interface")[0]["id"] == "subinterface"
+        assert get_direct_subclasses(db, "pkg.Interface") == []
 
     def test_cleanup_preserves_java_type_kinds(self, db):
         entities = [

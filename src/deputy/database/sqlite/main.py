@@ -1,3 +1,4 @@
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -7,7 +8,7 @@ from deputy.logger import get_logger
 logger = get_logger("database.sqlite")
 
 INHERITANCE_ENTITY_TYPES = ("CLASS", "INTERFACE", "ENUM", "RECORD")
-SUBCLASS_RELATION_KINDS = ("inherits", "extends", "interface_extends")
+SUBCLASS_RELATION_KINDS = ("inherits", "extends")
 
 
 def open_database(db_path: str) -> sqlite3.Connection:
@@ -34,6 +35,89 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE class_bases ADD COLUMN relation_kind TEXT NOT NULL DEFAULT 'inherits'"
         )
+    _backfill_java_relation_kinds(conn)
+
+
+def _java_relation_kinds(entity: sqlite3.Row) -> dict[str, str]:
+    try:
+        metadata = json.loads(entity["metadata_json"])
+    except (json.JSONDecodeError, TypeError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    relation_kinds: dict[str, str] = {}
+    if entity["type"] == "INTERFACE":
+        relation_kinds.update(
+            dict.fromkeys(metadata.get("extends_interfaces", []), "interface_extends")
+        )
+    else:
+        superclass = metadata.get("superclass")
+        if superclass:
+            relation_kinds[superclass] = "extends"
+        relation_kinds.update(
+            dict.fromkeys(metadata.get("implements", []), "implements")
+        )
+
+    for base in metadata.get("resolved_bases", []):
+        if not isinstance(base, dict):
+            continue
+        name = base.get("name")
+        full_path = base.get("full_path")
+        relation_kind = relation_kinds.get(name) if isinstance(name, str) else None
+        if relation_kind is None:
+            relation_kind = base.get("relation_kind")
+        if relation_kind not in {"extends", "implements", "interface_extends"}:
+            continue
+        if isinstance(name, str):
+            relation_kinds[name] = relation_kind
+        if isinstance(full_path, str):
+            relation_kinds[full_path] = relation_kind
+    return relation_kinds
+
+
+def _backfill_java_relation_kinds(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """SELECT cb.class_entity_id, cb.base_full_path, cb.base_entity_id,
+                  e.type, e.metadata_json
+           FROM class_bases cb
+           JOIN entities e ON e.id = cb.class_entity_id
+           WHERE e.language = 'java' AND cb.relation_kind = 'inherits'"""
+    ).fetchall()
+    if not rows:
+        return
+
+    entity_types = {
+        row["id"]: row["type"]
+        for row in conn.execute(
+            "SELECT id, type FROM entities WHERE type IN (?, ?, ?, ?)",
+            INHERITANCE_ENTITY_TYPES,
+        ).fetchall()
+    }
+
+    for row in rows:
+        relation_kind = _java_relation_kinds(row).get(row["base_full_path"])
+        if relation_kind is None:
+            if row["type"] == "INTERFACE":
+                relation_kind = "interface_extends"
+            elif row["type"] in ("ENUM", "RECORD"):
+                relation_kind = "implements"
+            elif row["type"] == "CLASS":
+                target_type = entity_types.get(row["base_entity_id"])
+                if target_type == "INTERFACE":
+                    relation_kind = "implements"
+                elif target_type in ("CLASS", "ENUM", "RECORD"):
+                    relation_kind = "extends"
+
+        if relation_kind is not None:
+            conn.execute(
+                """UPDATE class_bases
+                   SET relation_kind = ?
+                   WHERE class_entity_id = ?
+                   AND base_full_path = ?
+                   AND relation_kind = 'inherits'""",
+                (relation_kind, row["class_entity_id"], row["base_full_path"]),
+            )
 
 
 def get_branch_files(
