@@ -9,6 +9,7 @@ logger = get_logger("database.sqlite")
 
 INHERITANCE_ENTITY_TYPES = ("CLASS", "INTERFACE", "ENUM", "RECORD")
 SUBCLASS_RELATION_KINDS = ("inherits", "extends")
+JAVA_RELATION_KINDS = {"extends", "implements", "interface_extends"}
 
 
 def open_database(db_path: str) -> sqlite3.Connection:
@@ -36,6 +37,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE class_bases ADD COLUMN relation_kind TEXT NOT NULL DEFAULT 'inherits'"
         )
     _backfill_java_relation_kinds(conn)
+    _rebuild_missing_java_relations(conn)
 
 
 def _java_relation_kinds(entity: sqlite3.Row) -> dict[str, str]:
@@ -74,6 +76,216 @@ def _java_relation_kinds(entity: sqlite3.Row) -> dict[str, str]:
         if isinstance(full_path, str):
             relation_kinds[full_path] = relation_kind
     return relation_kinds
+
+
+def _java_relation_kind(
+    entity_type: str,
+    relation_kind: str | None,
+    target_type: str | None,
+) -> str:
+    if relation_kind in JAVA_RELATION_KINDS:
+        return relation_kind
+    if entity_type == "INTERFACE":
+        return "interface_extends"
+    if entity_type in ("ENUM", "RECORD"):
+        return "implements"
+    if target_type == "INTERFACE":
+        return "implements"
+    if target_type in ("CLASS", "ENUM", "RECORD"):
+        return "extends"
+    return "inherits"
+
+
+def _java_relation_rows(
+    entity: sqlite3.Row,
+    entities_by_fqn: dict[str, list[sqlite3.Row]],
+    entities_by_name: dict[str, list[sqlite3.Row]],
+    entities_by_id: dict[str, sqlite3.Row],
+) -> list[dict]:
+    try:
+        metadata = json.loads(entity["metadata_json"])
+    except (json.JSONDecodeError, TypeError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    relation_kinds = _java_relation_kinds(entity)
+    resolved_bases = metadata.get("resolved_bases", [])
+    if not isinstance(resolved_bases, list):
+        resolved_bases = []
+
+    base_specs: list[tuple[str, str | None, bool, str | None]] = []
+    if resolved_bases:
+        for base in resolved_bases:
+            if not isinstance(base, dict):
+                continue
+            name_value = base.get("name")
+            full_path_value = base.get("full_path")
+            if isinstance(name_value, str):
+                name = name_value
+            elif isinstance(full_path_value, str):
+                name = full_path_value
+            else:
+                continue
+            full_path = full_path_value if isinstance(full_path_value, str) else None
+            is_resolved = bool(base.get("is_resolved")) and isinstance(full_path, str)
+            reference = full_path if full_path is not None else name
+            target = None
+            target_id = base.get("entity_id")
+            if is_resolved:
+                if isinstance(target_id, str):
+                    target = entities_by_id.get(target_id)
+                if target is None:
+                    candidates = entities_by_fqn.get(reference, [])
+                    if len(candidates) == 1:
+                        target = candidates[0]
+                if target is None and "." not in reference:
+                    package = entity["full_path"].rsplit(".", 1)[0]
+                    candidates = entities_by_fqn.get(f"{package}.{reference}", [])
+                    if len(candidates) == 1:
+                        target = candidates[0]
+                if target is None:
+                    candidates = entities_by_name.get(reference, [])
+                    if len(candidates) == 1:
+                        target = candidates[0]
+                target_id = target["id"] if target is not None else None
+                if target is None:
+                    is_resolved = False
+            else:
+                target_id = None
+            relation_kind = relation_kinds.get(name)
+            if relation_kind is None and isinstance(full_path, str):
+                relation_kind = relation_kinds.get(full_path)
+            if relation_kind is None:
+                relation_kind = base.get("relation_kind")
+            target_type = target["type"] if target is not None else None
+            relation_kind = _java_relation_kind(
+                entity["type"], relation_kind, target_type
+            )
+            base_full_path = (
+                target["full_path"] if is_resolved and target is not None else name
+            )
+            base_specs.append((base_full_path, target_id, is_resolved, relation_kind))
+
+    if not base_specs:
+        if entity["type"] == "INTERFACE":
+            names = metadata.get("extends_interfaces", [])
+            named_relations = (
+                [(name, "interface_extends") for name in names if isinstance(name, str)]
+                if isinstance(names, list)
+                else []
+            )
+        else:
+            named_relations = []
+            superclass = metadata.get("superclass")
+            if isinstance(superclass, str) and superclass:
+                named_relations.append((superclass, "extends"))
+            implements = metadata.get("implements", [])
+            if isinstance(implements, list):
+                named_relations.extend(
+                    (name, "implements") for name in implements if isinstance(name, str)
+                )
+
+        for name, relation_kind in named_relations:
+            target = None
+            candidates = entities_by_fqn.get(name, [])
+            if len(candidates) == 1:
+                target = candidates[0]
+            elif "." not in name:
+                package = entity["full_path"].rsplit(".", 1)[0]
+                candidates = entities_by_fqn.get(f"{package}.{name}", [])
+                if len(candidates) == 1:
+                    target = candidates[0]
+                else:
+                    candidates = entities_by_name.get(name, [])
+                    if len(candidates) == 1:
+                        target = candidates[0]
+            if target is None:
+                base_specs.append(
+                    (
+                        name,
+                        None,
+                        False,
+                        _java_relation_kind(entity["type"], relation_kind, None),
+                    )
+                )
+            else:
+                base_specs.append(
+                    (
+                        target["full_path"],
+                        target["id"],
+                        True,
+                        _java_relation_kind(
+                            entity["type"], relation_kind, target["type"]
+                        ),
+                    )
+                )
+
+    return [
+        {
+            "base_full_path": base_full_path,
+            "base_entity_id": target_id,
+            "is_resolved": is_resolved,
+            "branch_info": None,
+            "relation_kind": relation_kind,
+        }
+        for base_full_path, target_id, is_resolved, relation_kind in base_specs
+    ]
+
+
+def _rebuild_missing_java_relations(conn: sqlite3.Connection) -> None:
+    entities = conn.execute(
+        """SELECT DISTINCT e.*
+           FROM entities e
+           JOIN branch_entities be ON be.entity_id = e.id
+           WHERE e.language = 'java'
+           AND e.type IN (?, ?, ?, ?)""",
+        INHERITANCE_ENTITY_TYPES,
+    ).fetchall()
+    if not entities:
+        return
+
+    type_entities = conn.execute(
+        """SELECT * FROM entities
+           WHERE language = 'java'
+           AND type IN (?, ?, ?, ?)""",
+        INHERITANCE_ENTITY_TYPES,
+    ).fetchall()
+    entities_by_fqn: dict[str, list[sqlite3.Row]] = {}
+    entities_by_name: dict[str, list[sqlite3.Row]] = {}
+    entities_by_id = {entity["id"]: entity for entity in type_entities}
+    for type_entity in type_entities:
+        entities_by_fqn.setdefault(type_entity["full_path"], []).append(type_entity)
+        entities_by_name.setdefault(type_entity["name"], []).append(type_entity)
+
+    existing = {
+        (row["class_entity_id"], row["base_full_path"])
+        for row in conn.execute(
+            "SELECT class_entity_id, base_full_path FROM class_bases"
+        ).fetchall()
+    }
+    for entity in entities:
+        for relation in _java_relation_rows(
+            entity, entities_by_fqn, entities_by_name, entities_by_id
+        ):
+            key = (entity["id"], relation["base_full_path"])
+            if key in existing:
+                continue
+            conn.execute(
+                """INSERT OR IGNORE INTO class_bases
+                   (class_entity_id, base_full_path, base_entity_id, is_resolved,
+                    branch_info, relation_kind)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    entity["id"],
+                    relation["base_full_path"],
+                    relation["base_entity_id"],
+                    1 if relation["is_resolved"] else 0,
+                    relation["branch_info"],
+                    relation["relation_kind"],
+                ),
+            )
+            existing.add(key)
 
 
 def _backfill_java_relation_kinds(conn: sqlite3.Connection) -> None:
