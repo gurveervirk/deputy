@@ -3,6 +3,7 @@ import os
 import tempfile
 
 from deproc.core.context import Context
+from deproc.core.interfaces.resolver import ResolutionStatus
 
 from deputy.core import create_context
 from deputy.database.sqlite import (
@@ -199,6 +200,11 @@ class TestPythonExportEndToEnd:
                 "pkg/child.py": (
                     "from .base import Base\nclass Child(Base):\n    pass\n"
                 ),
+                "pkg/first.py": "class Thing:\n    pass\n",
+                "pkg/second.py": "class Thing:\n    pass\n",
+                "pkg/ambiguous.py": (
+                    "from .first import Thing\nfrom .second import Thing\n"
+                ),
             }
         )
         ctx = create_context(project, None)
@@ -224,6 +230,16 @@ class TestPythonExportEndToEnd:
             ) == _resolution_snapshot(
                 restored_resolver.resolve(module_fqn, symbol_name, restored)
             )
+
+        original_ambiguous = original_resolver.resolve(
+            "pkg.ambiguous", "Thing", original
+        )
+        restored_ambiguous = restored_resolver.resolve(
+            "pkg.ambiguous", "Thing", restored
+        )
+        assert original_ambiguous.status is restored_ambiguous.status
+        assert original_ambiguous.status is ResolutionStatus.AMBIGUOUS
+        assert original_ambiguous.candidates == restored_ambiguous.candidates
 
         original_child = _entity_by_fqn(original, "pkg.child.Child")
         restored_child = _entity_by_fqn(restored, "pkg.child.Child")
@@ -760,6 +776,24 @@ class TestResolveJavaTypeReferencesDirect:
                     "package com.example;\n"
                     "public class Child extends Base implements Contract {}\n"
                 ),
+                "src/com/other/Hidden.java": ("package com.other;\nclass Hidden {}\n"),
+                "src/com/example/UseHidden.java": (
+                    "package com.example;\n"
+                    "import com.other.Hidden;\n"
+                    "public class UseHidden {}\n"
+                ),
+                "src/com/first/Thing.java": (
+                    "package com.first;\npublic class Thing {}\n"
+                ),
+                "src/com/second/Thing.java": (
+                    "package com.second;\npublic class Thing {}\n"
+                ),
+                "src/com/example/Ambiguous.java": (
+                    "package com.example;\n"
+                    "import com.first.*;\n"
+                    "import com.second.*;\n"
+                    "public class Ambiguous {}\n"
+                ),
             }
         )
         ctx = create_context(project, None)
@@ -795,6 +829,28 @@ class TestResolveJavaTypeReferencesDirect:
                 restored_result.candidates,
                 restored_result.reason,
             )
+
+        original_hidden = _entity_by_fqn(original, "com.example.UseHidden")
+        restored_hidden = _entity_by_fqn(restored, "com.example.UseHidden")
+        for owner, context, resolver in (
+            (original_hidden, original, original_resolver),
+            (restored_hidden, restored, restored_resolver),
+        ):
+            result = resolver.resolve_type_reference("Hidden", owner, context)
+            assert result.status is ResolutionStatus.INACCESSIBLE
+            assert result.candidates
+
+        original_ambiguous = _entity_by_fqn(original, "com.example.Ambiguous")
+        restored_ambiguous = _entity_by_fqn(restored, "com.example.Ambiguous")
+        original_result = original_resolver.resolve_type_reference(
+            "Thing", original_ambiguous, original
+        )
+        restored_result = restored_resolver.resolve_type_reference(
+            "Thing", restored_ambiguous, restored
+        )
+        assert original_result.status is restored_result.status
+        assert original_result.status is ResolutionStatus.AMBIGUOUS
+        assert original_result.candidates == restored_result.candidates
 
         assert original_child.superclass == restored_child.superclass
         assert original_child.implements == restored_child.implements
