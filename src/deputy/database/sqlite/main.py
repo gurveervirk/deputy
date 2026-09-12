@@ -6,6 +6,9 @@ from deputy.logger import get_logger
 
 logger = get_logger("database.sqlite")
 
+INHERITANCE_ENTITY_TYPES = ("CLASS", "INTERFACE", "ENUM", "RECORD")
+SUBCLASS_RELATION_KINDS = ("inherits", "extends", "interface_extends")
+
 
 def open_database(db_path: str) -> sqlite3.Connection:
     logger.debug("opening database: %s", db_path)
@@ -24,6 +27,13 @@ def _regexp(pattern: str, value: str) -> bool:
 def init_schema(conn: sqlite3.Connection) -> None:
     schema_path = Path(__file__).parent / "schema.sql"
     conn.executescript(schema_path.read_text())
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(class_bases)").fetchall()
+    }
+    if "relation_kind" not in columns:
+        conn.execute(
+            "ALTER TABLE class_bases ADD COLUMN relation_kind TEXT NOT NULL DEFAULT 'inherits'"
+        )
 
 
 def get_branch_files(
@@ -396,14 +406,15 @@ def upsert_class_bases(
     for base in bases:
         conn.execute(
             """INSERT OR REPLACE INTO class_bases
-               (class_entity_id, base_full_path, base_entity_id, is_resolved, branch_info)
-               VALUES (?, ?, ?, ?, ?)""",
+               (class_entity_id, base_full_path, base_entity_id, is_resolved, branch_info, relation_kind)
+               VALUES (?, ?, ?, ?, ?, ?)""",
             (
                 class_entity_id,
                 base["base_full_path"],
                 base.get("base_entity_id"),
                 1 if base.get("is_resolved") else 0,
                 base.get("branch_info"),
+                base.get("relation_kind", "inherits"),
             ),
         )
 
@@ -426,20 +437,71 @@ def get_direct_bases(conn: sqlite3.Connection, class_entity_id: str) -> list[dic
 def get_direct_subclasses(
     conn: sqlite3.Connection, base_full_path: str, branch_name: str | None = None
 ) -> list[dict]:
+    placeholders = ",".join("?" for _ in SUBCLASS_RELATION_KINDS)
+    if branch_name:
+        rows = conn.execute(
+            f"""SELECT DISTINCT e.* FROM entities e
+               JOIN class_bases cb ON e.id = cb.class_entity_id
+               JOIN branch_entities be ON e.id = be.entity_id
+               WHERE cb.base_full_path = ? AND be.branch_name = ?
+               AND cb.relation_kind IN ({placeholders})""",
+            (base_full_path, branch_name, *SUBCLASS_RELATION_KINDS),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"""SELECT DISTINCT e.* FROM entities e
+               JOIN class_bases cb ON e.id = cb.class_entity_id
+               WHERE cb.base_full_path = ?
+               AND cb.relation_kind IN ({placeholders})""",
+            (base_full_path, *SUBCLASS_RELATION_KINDS),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_direct_implementations(
+    conn: sqlite3.Connection, interface_full_path: str, branch_name: str | None = None
+) -> list[dict]:
     if branch_name:
         rows = conn.execute(
             """SELECT DISTINCT e.* FROM entities e
                JOIN class_bases cb ON e.id = cb.class_entity_id
                JOIN branch_entities be ON e.id = be.entity_id
-               WHERE cb.base_full_path = ? AND be.branch_name = ?""",
-            (base_full_path, branch_name),
+               WHERE cb.base_full_path = ?
+               AND cb.relation_kind = 'implements'
+               AND be.branch_name = ?""",
+            (interface_full_path, branch_name),
         ).fetchall()
     else:
         rows = conn.execute(
             """SELECT DISTINCT e.* FROM entities e
                JOIN class_bases cb ON e.id = cb.class_entity_id
-               WHERE cb.base_full_path = ?""",
-            (base_full_path,),
+               WHERE cb.base_full_path = ?
+               AND cb.relation_kind = 'implements'""",
+            (interface_full_path,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_direct_subinterfaces(
+    conn: sqlite3.Connection, interface_full_path: str, branch_name: str | None = None
+) -> list[dict]:
+    if branch_name:
+        rows = conn.execute(
+            """SELECT DISTINCT e.* FROM entities e
+               JOIN class_bases cb ON e.id = cb.class_entity_id
+               JOIN branch_entities be ON e.id = be.entity_id
+               WHERE cb.base_full_path = ?
+               AND cb.relation_kind = 'interface_extends'
+               AND be.branch_name = ?""",
+            (interface_full_path, branch_name),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT DISTINCT e.* FROM entities e
+               JOIN class_bases cb ON e.id = cb.class_entity_id
+               WHERE cb.base_full_path = ?
+               AND cb.relation_kind = 'interface_extends'""",
+            (interface_full_path,),
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -530,10 +592,11 @@ def clean_orphan_entities(conn: sqlite3.Connection) -> None:
 def clean_stale_inheritance_rows(
     conn: sqlite3.Connection, branch_name: str | None = None
 ) -> None:
+    type_placeholders = ",".join("?" for _ in INHERITANCE_ENTITY_TYPES)
     conn.execute(
-        """DELETE FROM class_bases
+        f"""DELETE FROM class_bases
            WHERE class_entity_id NOT IN (
-               SELECT id FROM entities WHERE type = 'CLASS'
+               SELECT id FROM entities WHERE type IN ({type_placeholders})
            )
            OR class_entity_id NOT IN (
                SELECT entity_id FROM branch_entities
@@ -541,7 +604,7 @@ def clean_stale_inheritance_rows(
            OR (
                base_entity_id IS NOT NULL
                AND base_entity_id NOT IN (
-                   SELECT id FROM entities WHERE type = 'CLASS'
+                   SELECT id FROM entities WHERE type IN ({type_placeholders})
                )
            )
            OR (
@@ -549,7 +612,8 @@ def clean_stale_inheritance_rows(
                AND base_entity_id NOT IN (
                    SELECT entity_id FROM branch_entities
                )
-           )"""
+           )""",
+        (*INHERITANCE_ENTITY_TYPES, *INHERITANCE_ENTITY_TYPES),
     )
     conn.execute(
         """DELETE FROM inheritance_pins

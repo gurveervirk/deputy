@@ -165,17 +165,24 @@ def has_multiple_candidates(candidates: list[dict]) -> bool:
     return len(module_level) > 1
 
 
-def _java_base_names(record: dict) -> list[str]:
+def _java_base_relationships(record: dict) -> list[tuple[str, str]]:
     meta = {}
     with contextlib.suppress(json.JSONDecodeError, TypeError):
         meta = json.loads(record["metadata_json"])
     if record["type"] == "INTERFACE":
-        return list(meta.get("extends_interfaces", []))
-    names = list(meta.get("implements", []))
+        return [
+            (name, "interface_extends") for name in meta.get("extends_interfaces", [])
+        ]
+    relationships = []
     superclass = meta.get("superclass")
     if superclass:
-        names.insert(0, superclass)
-    return names
+        relationships.append((superclass, "extends"))
+    relationships.extend((name, "implements") for name in meta.get("implements", []))
+    return relationships
+
+
+def _java_base_names(record: dict) -> list[str]:
+    return [name for name, _ in _java_base_relationships(record)]
 
 
 def _java_base_branch_info(
@@ -219,7 +226,8 @@ def resolve_java_type_references(
         entity = registry.get(record["id"])
         if entity is None:
             continue
-        base_names = _java_base_names(record)
+        base_relationships = _java_base_relationships(record)
+        base_names = [name for name, _ in base_relationships]
         class_entity_id = record["id"]
         delete_class_bases_by_class(conn, class_entity_id)
 
@@ -242,7 +250,7 @@ def resolve_java_type_references(
             resolved_bases: list[dict] = []
         else:
             resolved_bases = []
-            for base_name in base_names:
+            for base_name, relation_kind in base_relationships:
                 result = resolve_type_reference(base_name, entity, ctx)
                 if (
                     result.status == ResolutionStatus.RESOLVED
@@ -256,6 +264,7 @@ def resolve_java_type_references(
                             "base_entity_id": result.value,
                             "is_resolved": True,
                             "branch_info": None,
+                            "relation_kind": relation_kind,
                         }
                     )
                 else:
@@ -273,6 +282,7 @@ def resolve_java_type_references(
                             "branch_info": _java_base_branch_info(
                                 result.status, result.reason, candidate_fqns
                             ),
+                            "relation_kind": relation_kind,
                         }
                     )
 
@@ -292,6 +302,7 @@ def resolve_java_type_references(
                         if entry["is_resolved"]
                         else None,
                         "is_resolved": entry["is_resolved"],
+                        "relation_kind": entry["relation_kind"],
                     }
                 )
         meta = {}
@@ -307,7 +318,7 @@ def resolve_all_inherits(
     records: list[dict],
     branch: str | None = None,
 ) -> None:
-    """Resolve base classes for all CLASS records and write results to class_bases table."""
+    """Resolve inheritance records and write results to class_bases table."""
     resolve_java_type_references(conn, records, branch=branch)
 
     class_records = [
@@ -380,6 +391,7 @@ def resolve_all_inherits(
                             "base_entity_id": None,
                             "is_resolved": False,
                             "branch_info": json.dumps(candidates_info),
+                            "relation_kind": "inherits",
                         }
                     )
                     logger.info(
@@ -394,6 +406,7 @@ def resolve_all_inherits(
                             "base_entity_id": resolved_entity_id,
                             "is_resolved": True,
                             "branch_info": None,
+                            "relation_kind": "inherits",
                         }
                     )
             elif candidates:
@@ -414,6 +427,7 @@ def resolve_all_inherits(
                         "base_entity_id": None,
                         "is_resolved": False,
                         "branch_info": json.dumps(candidates_info),
+                        "relation_kind": "inherits",
                     }
                 )
                 logger.info(
@@ -429,6 +443,7 @@ def resolve_all_inherits(
                         "base_entity_id": None,
                         "is_resolved": False,
                         "branch_info": None,
+                        "relation_kind": "inherits",
                     }
                 )
                 logger.info(
@@ -454,6 +469,7 @@ def resolve_all_inherits(
                         if entry["is_resolved"]
                         else None,
                         "is_resolved": entry["is_resolved"],
+                        "relation_kind": entry["relation_kind"],
                     }
                 )
             else:
@@ -463,6 +479,7 @@ def resolve_all_inherits(
                         "full_path": None,
                         "entity_id": None,
                         "is_resolved": False,
+                        "relation_kind": "inherits",
                     }
                 )
         meta["resolved_bases"] = resolved_bases_meta
