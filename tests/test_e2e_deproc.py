@@ -6,9 +6,19 @@ from deputy.core import create_context
 from deputy.database.sqlite import (
     get_branch_entities,
     get_direct_bases,
+    get_direct_implementations,
+    get_direct_subclasses,
+    get_direct_subinterfaces,
+    get_entity_by_id,
+    get_entity_ids_by_fqn,
+    init_schema,
+    open_database,
+    set_config,
     upsert_branch_entities,
+    upsert_branch_file,
     upsert_entity,
 )
+from deputy.tools.core import run_sync
 from deputy.tools.deproc_resolution import (
     DeprocResolutionAdapter,
     build_context_from_records,
@@ -20,7 +30,7 @@ from deputy.tools.inheritance import (
 )
 from deputy.tools.resolve import InteractiveResolver
 from deputy.tools.utils import _process_files
-from deputy.utils.storage import get_source_files
+from deputy.utils.storage import compute_sha256, get_source_files
 
 
 def _write_project(files: dict[str, str]) -> str:
@@ -191,6 +201,14 @@ class TestJavaTypeReferenceEndToEnd:
             b["is_resolved"] == 1 and b["base_full_path"] == "com.example.Runnable2"
             for b in worker_bases
         )
+        assert (
+            next(
+                b
+                for b in worker_bases
+                if b["base_full_path"] == "com.example.Runnable2"
+            )["relation_kind"]
+            == "implements"
+        )
 
         missing = next(r for r in records if r["full_path"] == "com.example.Missing")
         missing_bases = get_direct_bases(db, missing["id"])
@@ -200,7 +218,7 @@ class TestJavaTypeReferenceEndToEnd:
         branch_info = json.loads(missing_bases[0]["branch_info"])
         assert branch_info["status"] == "unresolved"
 
-    def test_ambiguous_type_reference_preserved(self, db):
+    def test_same_package_type_shadows_wildcard_import(self, db):
         project = _write_project(
             {
                 "src/com/example/Base.java": (
@@ -221,10 +239,370 @@ class TestJavaTypeReferenceEndToEnd:
         child = next(r for r in records if r["full_path"] == "com.example.Child")
         bases = get_direct_bases(db, child["id"])
         assert len(bases) == 1
-        assert bases[0]["is_resolved"] == 0
-        branch_info = json.loads(bases[0]["branch_info"])
-        assert branch_info["status"] == "ambiguous"
-        assert len(branch_info["candidates"]) >= 2
+        assert bases[0]["is_resolved"] == 1
+        assert bases[0]["base_full_path"] == "com.example.Base"
+
+    def test_interface_record_enum_relationships_survive_run_sync(
+        self, tmp_path, monkeypatch
+    ):
+        project = tmp_path / "project"
+        project.mkdir()
+        files = {
+            "src/com/example/Marker.java": (
+                "package com.example;\npublic interface Marker {}\n"
+            ),
+            "src/com/example/ChildMarker.java": (
+                "package com.example;\npublic interface ChildMarker extends Marker {}\n"
+            ),
+            "src/com/example/Worker.java": (
+                "package com.example;\npublic class Worker implements Marker {}\n"
+            ),
+            "src/com/example/Data.java": (
+                "package com.example;\n"
+                "public record Data(int id) implements Marker {}\n"
+            ),
+            "src/com/example/Kind.java": (
+                "package com.example;\npublic enum Kind implements Marker { ONE }\n"
+            ),
+        }
+        for relative_path, content in files.items():
+            path = project / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+
+        db_path = tmp_path / "deputy.db"
+        conn = open_database(str(db_path))
+        init_schema(conn)
+        set_config(conn, "base_path", str(project))
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr(
+            "deputy.tools.core._open_database",
+            lambda: open_database(str(db_path)),
+        )
+        monkeypatch.setattr("deputy.tools.core.get_current_branch", lambda: "main")
+        run_sync(force=True, sync_deps=False)
+
+        conn = open_database(str(db_path))
+
+        def entity_id(full_path, entity_type):
+            return next(
+                entity_id
+                for entity_id in get_entity_ids_by_fqn(conn, full_path)
+                if get_entity_by_id(conn, entity_id)["type"] == entity_type
+            )
+
+        child_marker_id = entity_id("com.example.ChildMarker", "INTERFACE")
+        worker_id = entity_id("com.example.Worker", "CLASS")
+        data_id = entity_id("com.example.Data", "RECORD")
+        kind_id = entity_id("com.example.Kind", "ENUM")
+
+        child_marker = get_entity_by_id(conn, child_marker_id)
+        worker = get_entity_by_id(conn, worker_id)
+        data = get_entity_by_id(conn, data_id)
+        kind = get_entity_by_id(conn, kind_id)
+        assert child_marker["type"] == "INTERFACE"
+        assert worker["type"] == "CLASS"
+        assert data["type"] == "RECORD"
+        assert kind["type"] == "ENUM"
+
+        assert (
+            get_direct_bases(conn, child_marker_id)[0]["relation_kind"]
+            == "interface_extends"
+        )
+        assert get_direct_bases(conn, worker_id)[0]["relation_kind"] == "implements"
+        assert get_direct_bases(conn, data_id)[0]["relation_kind"] == "implements"
+        assert get_direct_bases(conn, kind_id)[0]["relation_kind"] == "implements"
+        implementors = get_direct_implementations(conn, "com.example.Marker", "main")
+        assert {row["id"] for row in implementors} == {worker_id, data_id, kind_id}
+        subinterfaces = get_direct_subinterfaces(conn, "com.example.Marker", "main")
+        assert {row["id"] for row in subinterfaces} == {child_marker_id}
+        assert get_direct_subclasses(conn, "com.example.Marker", "main") == []
+        conn.close()
+
+    def test_run_sync_migrates_legacy_java_relation_kinds_without_file_changes(
+        self, tmp_path, monkeypatch
+    ):
+        project = tmp_path / "project"
+        project.mkdir()
+        db_path = tmp_path / "deputy.db"
+
+        conn = open_database(str(db_path))
+        init_schema(conn)
+        set_config(conn, "base_path", str(project))
+        conn.execute("DROP TABLE class_bases")
+        conn.execute(
+            """CREATE TABLE class_bases (
+                class_entity_id TEXT NOT NULL,
+                base_full_path TEXT NOT NULL,
+                base_entity_id TEXT,
+                is_resolved INTEGER NOT NULL DEFAULT 0,
+                branch_info TEXT,
+               PRIMARY KEY (class_entity_id, base_full_path)
+            )"""
+        )
+        entities = [
+            (
+                "marker",
+                "com.example.Marker",
+                "Marker",
+                "INTERFACE",
+                {},
+            ),
+            (
+                "base",
+                "com.example.Base",
+                "Base",
+                "CLASS",
+                {},
+            ),
+            (
+                "worker",
+                "com.example.Worker",
+                "Worker",
+                "CLASS",
+                {"implements": ["com.example.Marker"]},
+            ),
+            (
+                "child",
+                "com.example.Child",
+                "Child",
+                "CLASS",
+                {"superclass": "com.example.Base"},
+            ),
+            (
+                "child_marker",
+                "com.example.ChildMarker",
+                "ChildMarker",
+                "INTERFACE",
+                {"extends_interfaces": ["com.example.Marker"]},
+            ),
+        ]
+        for entity_id, full_path, name, entity_type, metadata in entities:
+            upsert_entity(
+                conn,
+                id=entity_id,
+                language="java",
+                full_path=full_path,
+                name=name,
+                type=entity_type,
+                metadata_json=json.dumps(metadata),
+            )
+        upsert_branch_entities(conn, "main", [entity[0] for entity in entities])
+        legacy_relations = [
+            ("worker", "com.example.Marker", "marker"),
+            ("child", "com.example.Base", "base"),
+            ("child_marker", "com.example.Marker", "marker"),
+        ]
+        conn.executemany(
+            """INSERT INTO class_bases
+               (class_entity_id, base_full_path, base_entity_id, is_resolved, branch_info)
+               VALUES (?, ?, ?, ?, ?)""",
+            [
+                (owner, base, target, 1, None)
+                for owner, base, target in legacy_relations
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr("deputy.tools.utils._resolve_db_path", lambda: str(db_path))
+        monkeypatch.setattr("deputy.tools.core.get_current_branch", lambda: "main")
+
+        run_sync(force=False, sync_deps=False)
+
+        conn = open_database(str(db_path))
+        relation_kinds = {
+            owner: get_direct_bases(conn, owner)[0]["relation_kind"]
+            for owner, _, _ in legacy_relations
+        }
+        assert relation_kinds == {
+            "worker": "implements",
+            "child": "extends",
+            "child_marker": "interface_extends",
+        }
+        assert {
+            row["id"]
+            for row in get_direct_implementations(conn, "com.example.Marker", "main")
+        } == {"worker"}
+        assert {
+            row["id"] for row in get_direct_subclasses(conn, "com.example.Base", "main")
+        } == {"child"}
+        assert {
+            row["id"]
+            for row in get_direct_subinterfaces(conn, "com.example.Marker", "main")
+        } == {"child_marker"}
+        assert get_direct_subclasses(conn, "com.example.Marker", "main") == []
+        conn.close()
+
+    def test_run_sync_rebuilds_missing_legacy_java_relations_without_file_changes(
+        self, tmp_path, monkeypatch
+    ):
+        project = tmp_path / "project"
+        project.mkdir()
+        db_path = tmp_path / "deputy.db"
+        files = {
+            "src/com/example/Marker.java": "package com.example; public interface Marker {}",
+            "src/com/example/ChildMarker.java": (
+                "package com.example; public interface ChildMarker extends Marker {}"
+            ),
+            "src/com/example/Worker.java": (
+                "package com.example; public class Worker implements Marker {}"
+            ),
+            "src/com/example/Data.java": (
+                "package com.example; public record Data(int id) implements Marker {}"
+            ),
+            "src/com/example/Kind.java": (
+                "package com.example; public enum Kind implements Marker { ONE }"
+            ),
+        }
+        for relative_path, content in files.items():
+            path = project / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+
+        conn = open_database(str(db_path))
+        init_schema(conn)
+        set_config(conn, "base_path", str(project))
+        conn.execute("DROP TABLE class_bases")
+        conn.execute(
+            """CREATE TABLE class_bases (
+                class_entity_id TEXT NOT NULL,
+                base_full_path TEXT NOT NULL,
+                base_entity_id TEXT,
+                is_resolved INTEGER NOT NULL DEFAULT 0,
+                branch_info TEXT,
+                PRIMARY KEY (class_entity_id, base_full_path)
+            )"""
+        )
+        entities = [
+            (
+                "marker",
+                "com.example.Marker",
+                "Marker",
+                "INTERFACE",
+                {},
+            ),
+            (
+                "child_marker",
+                "com.example.ChildMarker",
+                "ChildMarker",
+                "INTERFACE",
+                {
+                    "extends_interfaces": ["com.example.Marker"],
+                    "resolved_bases": [
+                        {
+                            "name": "com.example.Marker",
+                            "full_path": "com.example.Marker",
+                            "entity_id": "marker",
+                            "is_resolved": True,
+                        }
+                    ],
+                },
+            ),
+            (
+                "worker",
+                "com.example.Worker",
+                "Worker",
+                "CLASS",
+                {
+                    "implements": ["com.example.Marker"],
+                    "resolved_bases": [
+                        {
+                            "name": "com.example.Marker",
+                            "full_path": "com.example.Marker",
+                            "entity_id": "marker",
+                            "is_resolved": True,
+                        }
+                    ],
+                },
+            ),
+            (
+                "data",
+                "com.example.Data",
+                "Data",
+                "RECORD",
+                {
+                    "implements": ["com.example.Marker"],
+                    "resolved_bases": [
+                        {
+                            "name": "com.example.Marker",
+                            "full_path": "com.example.Marker",
+                            "entity_id": "marker",
+                            "is_resolved": True,
+                        }
+                    ],
+                },
+            ),
+            (
+                "kind",
+                "com.example.Kind",
+                "Kind",
+                "ENUM",
+                {
+                    "implements": ["com.example.Marker"],
+                    "resolved_bases": [
+                        {
+                            "name": "com.example.Marker",
+                            "full_path": "com.example.Marker",
+                            "entity_id": "marker",
+                            "is_resolved": True,
+                        }
+                    ],
+                },
+            ),
+        ]
+        for entity_id, full_path, name, entity_type, metadata in entities:
+            upsert_entity(
+                conn,
+                id=entity_id,
+                language="java",
+                full_path=full_path,
+                name=name,
+                type=entity_type,
+                metadata_json=json.dumps(metadata),
+            )
+        upsert_branch_entities(conn, "main", [entity[0] for entity in entities])
+        for relative_path in files:
+            path = project / relative_path
+            upsert_branch_file(
+                conn,
+                "main",
+                relative_path,
+                compute_sha256(str(path)),
+                path.stat().st_mtime,
+            )
+        assert conn.execute("SELECT COUNT(*) FROM class_bases").fetchone()[0] == 0
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr("deputy.tools.utils._resolve_db_path", lambda: str(db_path))
+        monkeypatch.setattr("deputy.tools.core.get_current_branch", lambda: "main")
+
+        run_sync(force=False, sync_deps=False)
+
+        conn = open_database(str(db_path))
+        relation_kinds = {
+            entity_id: get_direct_bases(conn, entity_id)[0]["relation_kind"]
+            for entity_id in ("child_marker", "worker", "data", "kind")
+        }
+        assert relation_kinds == {
+            "child_marker": "interface_extends",
+            "worker": "implements",
+            "data": "implements",
+            "kind": "implements",
+        }
+        assert {
+            row["id"]
+            for row in get_direct_implementations(conn, "com.example.Marker", "main")
+        } == {"worker", "data", "kind"}
+        assert {
+            row["id"]
+            for row in get_direct_subinterfaces(conn, "com.example.Marker", "main")
+        } == {"child_marker"}
+        assert get_direct_subclasses(conn, "com.example.Marker", "main") == []
+        conn.close()
 
     def test_interactive_resolver_uses_deproc_backend(self, db):
         project = _write_project(

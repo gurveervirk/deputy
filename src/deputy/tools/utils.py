@@ -14,6 +14,7 @@ from deputy.database.sqlite import (
     get_branch_files,
     get_entity_by_id,
     get_entity_ids_by_fqn,
+    init_schema,
     open_database,
 )
 from deputy.logger import get_logger
@@ -121,7 +122,10 @@ def _resolve_db_path() -> str:
 
 
 def _open_database() -> sqlite3.Connection:
-    return open_database(_resolve_db_path())
+    conn = open_database(_resolve_db_path())
+    init_schema(conn)
+    conn.commit()
+    return conn
 
 
 def _detect_file_changes(

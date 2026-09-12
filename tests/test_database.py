@@ -14,7 +14,9 @@ from deputy.database.sqlite import (
     get_branch_files,
     get_config,
     get_direct_bases,
+    get_direct_implementations,
     get_direct_subclasses,
+    get_direct_subinterfaces,
     get_entities_by_ids,
     get_entities_by_path,
     get_entity_by_id,
@@ -23,7 +25,9 @@ from deputy.database.sqlite import (
     get_filtered_entities_by_path,
     get_inheritance_pin,
     get_transitive_subclasses,
+    init_schema,
     list_inheritance_pins,
+    open_database,
     search_entities,
     set_config,
     update_mtime,
@@ -516,6 +520,34 @@ class TestDetectFileChanges:
 
 
 class TestClassBases:
+    def test_init_schema_migrates_relation_kind(self):
+        conn = open_database(":memory:")
+        conn.executescript(
+            """CREATE TABLE class_bases (
+                class_entity_id TEXT NOT NULL,
+                base_full_path TEXT NOT NULL,
+                base_entity_id TEXT,
+                is_resolved INTEGER NOT NULL DEFAULT 0,
+                branch_info TEXT,
+                PRIMARY KEY (class_entity_id, base_full_path)
+            );"""
+        )
+
+        init_schema(conn)
+        upsert_class_bases(
+            conn,
+            "class_foo",
+            [{"base_full_path": "pkg.Base", "is_resolved": True}],
+        )
+
+        assert (
+            conn.execute("SELECT relation_kind FROM class_bases").fetchone()[
+                "relation_kind"
+            ]
+            == "inherits"
+        )
+        conn.close()
+
     def test_upsert_and_get_direct_bases(self, db):
         bases = [
             {
@@ -535,6 +567,7 @@ class TestClassBases:
         assert len(result) == 2
         assert result[0]["base_full_path"] == "pkg.base.BaseA"
         assert result[0]["is_resolved"] == 1
+        assert result[0]["relation_kind"] == "inherits"
         assert result[1]["base_full_path"] == "pkg.mixins.Mixin"
         assert result[1]["is_resolved"] == 0
 
@@ -673,6 +706,119 @@ class TestClassBases:
         paths = {s["full_path"] for s in subs}
         assert "pkg.mod2.ClassA" in paths
         assert "pkg.mod3.ClassC" in paths
+
+    def test_relationship_queries_keep_implements_separate(self, db):
+        entities = [
+            ("interface", "pkg.Interface", "Interface", "INTERFACE"),
+            ("implementation", "pkg.Implementation", "Implementation", "CLASS"),
+            ("subinterface", "pkg.SubInterface", "SubInterface", "INTERFACE"),
+        ]
+        for entity_id, full_path, name, entity_type in entities:
+            upsert_entity(
+                db,
+                id=entity_id,
+                language="java",
+                full_path=full_path,
+                name=name,
+                type=entity_type,
+                metadata_json="{}",
+            )
+        upsert_class_bases(
+            db,
+            "implementation",
+            [
+                {
+                    "base_full_path": "pkg.Interface",
+                    "base_entity_id": "interface",
+                    "is_resolved": True,
+                    "relation_kind": "implements",
+                }
+            ],
+        )
+        upsert_class_bases(
+            db,
+            "subinterface",
+            [
+                {
+                    "base_full_path": "pkg.Interface",
+                    "base_entity_id": "interface",
+                    "is_resolved": True,
+                    "relation_kind": "interface_extends",
+                }
+            ],
+        )
+
+        assert (
+            get_direct_implementations(db, "pkg.Interface")[0]["id"] == "implementation"
+        )
+        assert get_direct_subinterfaces(db, "pkg.Interface")[0]["id"] == "subinterface"
+        assert get_direct_subclasses(db, "pkg.Interface") == []
+
+    def test_cleanup_preserves_java_type_kinds(self, db):
+        entities = [
+            ("owner_interface", "pkg.ChildInterface", "ChildInterface", "INTERFACE"),
+            ("owner_record", "pkg.Data", "Data", "RECORD"),
+            ("owner_enum", "pkg.Kind", "Kind", "ENUM"),
+            ("base_interface", "pkg.BaseInterface", "BaseInterface", "INTERFACE"),
+        ]
+        for entity_id, full_path, name, entity_type in entities:
+            upsert_entity(
+                db,
+                id=entity_id,
+                language="java",
+                full_path=full_path,
+                name=name,
+                type=entity_type,
+                metadata_json="{}",
+            )
+        upsert_branch_entities(db, "main", [entity_id for entity_id, *_ in entities])
+        upsert_class_bases(
+            db,
+            "owner_interface",
+            [
+                {
+                    "base_full_path": "pkg.BaseInterface",
+                    "base_entity_id": "base_interface",
+                    "is_resolved": True,
+                    "relation_kind": "interface_extends",
+                }
+            ],
+        )
+        upsert_class_bases(
+            db,
+            "owner_record",
+            [
+                {
+                    "base_full_path": "pkg.BaseInterface",
+                    "base_entity_id": "base_interface",
+                    "is_resolved": True,
+                    "relation_kind": "implements",
+                }
+            ],
+        )
+        upsert_class_bases(
+            db,
+            "owner_enum",
+            [
+                {
+                    "base_full_path": "pkg.BaseInterface",
+                    "base_entity_id": "base_interface",
+                    "is_resolved": True,
+                    "relation_kind": "implements",
+                }
+            ],
+        )
+
+        clean_stale_inheritance_rows(db, branch_name="main")
+
+        rows = db.execute(
+            "SELECT class_entity_id, relation_kind FROM class_bases ORDER BY class_entity_id"
+        ).fetchall()
+        assert [(row[0], row[1]) for row in rows] == [
+            ("owner_enum", "implements"),
+            ("owner_interface", "interface_extends"),
+            ("owner_record", "implements"),
+        ]
 
 
 class TestInheritancePins:

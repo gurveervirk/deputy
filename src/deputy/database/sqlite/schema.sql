@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS class_bases (
     base_entity_id   TEXT,
     is_resolved      INTEGER NOT NULL DEFAULT 0,
     branch_info      TEXT,
+    relation_kind    TEXT NOT NULL DEFAULT 'inherits',
     PRIMARY KEY (class_entity_id, base_full_path)
 );
 
@@ -77,4 +78,3 @@ CREATE TABLE IF NOT EXISTS inheritance_pins (
     branch_name      TEXT NOT NULL,
     PRIMARY KEY (class_entity_id, base_name, branch_name)
 );
-
