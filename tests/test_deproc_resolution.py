@@ -128,6 +128,54 @@ def _insert_java_graph(db, branch_name: str) -> None:
     db.commit()
 
 
+def _insert_java_inaccessible_graph(db, branch_name: str) -> None:
+    rows = [
+        {
+            "id": f"{branch_name}_cu",
+            "language": "java",
+            "full_path": "com.example.Main",
+            "name": "Main",
+            "type": "COMPILATION_UNIT",
+            "metadata_json": json.dumps(
+                {
+                    "fqn": "com.example.Main",
+                    "package_fqn": "com.example",
+                    "path": "src/Main.java",
+                    "import_stmt_ids": [f"{branch_name}_import"],
+                }
+            ),
+        },
+        {
+            "id": f"{branch_name}_import",
+            "language": "java",
+            "full_path": "com.other.Hidden",
+            "name": "Hidden",
+            "type": "IMPORT",
+            "metadata_json": json.dumps(
+                {
+                    "import_path": "com.other.Hidden",
+                    "import_kind": "single_type",
+                    "imported_name": "Hidden",
+                    "parent_id": f"{branch_name}_cu",
+                }
+            ),
+            "parent_id": f"{branch_name}_cu",
+        },
+        {
+            "id": f"{branch_name}_hidden",
+            "language": "java",
+            "full_path": "com.other.Hidden",
+            "name": "Hidden",
+            "type": "CLASS",
+            "metadata_json": '{"fqn":"com.other.Hidden","visibility":"package-private"}',
+        },
+    ]
+    for row in rows:
+        upsert_entity(db, **row)
+    upsert_branch_entities(db, branch_name, [row["id"] for row in rows])
+    db.commit()
+
+
 def test_adapter_resolves_from_branch_scoped_python_graph(db):
     _insert_python_graph(db, "main")
 
@@ -167,6 +215,7 @@ def test_adapter_resolves_java_imports(db):
 
     assert result.language == "java"
     assert [record["full_path"] for record in result.resolved] == ["java.util.List"]
+    assert [record["full_path"] for record in result.candidates] == ["java.util.List"]
 
 
 def test_adapter_java_status_is_resolved(db):
@@ -189,3 +238,18 @@ def test_adapter_java_status_unresolved(db):
 
     assert result.status in ("resolved", "unresolved")
     assert result.resolved == ()
+
+
+def test_adapter_preserves_inaccessible_candidates(db):
+    _insert_java_inaccessible_graph(db, "main")
+
+    result = DeprocResolutionAdapter(db, "main").resolve(
+        "com.example.Main", "Hidden", language="java"
+    )
+
+    assert result.status == "inaccessible"
+    assert [record["full_path"] for record in result.inaccessible] == [
+        "com.other.Hidden"
+    ]
+    assert result.ambiguous == ()
+    assert [record["full_path"] for record in result.candidates] == ["com.other.Hidden"]

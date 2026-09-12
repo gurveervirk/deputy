@@ -2,6 +2,8 @@ import json
 import os
 import tempfile
 
+from deproc.core.context import Context
+
 from deputy.core import create_context
 from deputy.database.sqlite import (
     get_branch_entities,
@@ -66,6 +68,52 @@ def _run_sync(db, project_dir: str, branch: str = "main") -> list[dict]:
     upsert_branch_entities(db, branch, [r["id"] for r in records])
     db.commit()
     return records
+
+
+def _capture_processed_context(
+    ctx: Context, files: list, base_path: str
+) -> tuple[list[dict], dict[str, Context]]:
+    contexts: dict[str, Context] = {}
+    records, _ = _process_files(
+        ctx,
+        files,
+        base_path,
+        context_sink=lambda language, linked: contexts.__setitem__(language, linked),
+    )
+    return records, contexts
+
+
+def _entity_by_fqn(context: Context, fqn: str):
+    return next(
+        entity
+        for entity in context.entity_registry.values()
+        if getattr(entity, "fqn", None) == fqn
+    )
+
+
+def _resolution_snapshot(result) -> tuple:
+    return (
+        result.status,
+        result.reason,
+        tuple(sorted(result.resolved_ids)),
+        tuple(sorted(result.unresolved_ids)),
+        tuple(sorted(result.inaccessible_ids)),
+        tuple(sorted(result.ambiguous_ids)),
+        tuple(sorted(result.candidates)),
+    )
+
+
+def _assert_serialized_registry_is_complete(
+    records: list[dict], context: Context
+) -> None:
+    restored_ids = {entity.id for entity in context.entity_registry.values()}
+    for record in records:
+        assert record["id"] in restored_ids
+
+    for entity in context.entity_registry.values():
+        parent_id = getattr(entity, "parent_id", None)
+        if parent_id is not None:
+            assert context.entity_registry.get(parent_id) is not None
 
 
 class TestPythonExportEndToEnd:
@@ -137,6 +185,52 @@ class TestPythonExportEndToEnd:
         assert result.status == "unresolved"
         assert result.resolved == ()
 
+    def test_semantic_queries_survive_sync_record_round_trip(self, db):
+        project = _write_project(
+            {
+                "pkg/base.py": (
+                    "__all__ = ['Base', 'Hidden']\n"
+                    "class Base:\n"
+                    "    pass\n"
+                    "class Hidden:\n"
+                    "    pass\n"
+                ),
+                "pkg/facade.py": ("from .base import *\n__all__ = ['Base']\n"),
+                "pkg/child.py": (
+                    "from .base import Base\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        ctx = create_context(project, None)
+        records, contexts = _capture_processed_context(
+            ctx, get_source_files(ctx), project
+        )
+        original = contexts["python"]
+        restored = build_context_from_records(records)
+        _assert_serialized_registry_is_complete(records, restored)
+
+        original_resolver = original.get_resolver("python")
+        restored_resolver = restored.get_resolver("python")
+        assert original_resolver is not None
+        assert restored_resolver is not None
+
+        for module_fqn, symbol_name in (
+            ("pkg.facade", "Base"),
+            ("pkg.facade", "Hidden"),
+            ("pkg.child", "Base"),
+        ):
+            assert _resolution_snapshot(
+                original_resolver.resolve(module_fqn, symbol_name, original)
+            ) == _resolution_snapshot(
+                restored_resolver.resolve(module_fqn, symbol_name, restored)
+            )
+
+        original_child = _entity_by_fqn(original, "pkg.child.Child")
+        restored_child = _entity_by_fqn(restored, "pkg.child.Child")
+        assert original_resolver._class_mro_ids(
+            original_child.id, original, {}, set()
+        ) == restored_resolver._class_mro_ids(restored_child.id, restored, {}, set())
+
 
 class TestJavaTypeReferenceEndToEnd:
     def test_superclass_resolved_and_projected(self, db):
@@ -160,6 +254,14 @@ class TestJavaTypeReferenceEndToEnd:
         assert len(bases) == 1
         assert bases[0]["is_resolved"] == 1
         assert bases[0]["base_full_path"] == "com.example.Base"
+
+        type_result = DeprocResolutionAdapter(db, "main").resolve_type_reference(
+            child["id"], "Base"
+        )
+        assert type_result.status == "resolved"
+        assert [r["full_path"] for r in type_result.resolved] == ["com.example.Base"]
+        assert type_result.ambiguous == ()
+        assert [r["full_path"] for r in type_result.candidates] == ["com.example.Base"]
 
         child_meta = json.loads(child["metadata_json"])
         assert child_meta["resolved_bases"][0]["is_resolved"] is True
@@ -644,3 +746,55 @@ class TestResolveJavaTypeReferencesDirect:
             if getattr(entity, "fqn", None) == "com.example.Child"
         ]
         assert child_entities
+
+    def test_semantic_queries_survive_sync_record_round_trip(self, db):
+        project = _write_project(
+            {
+                "src/com/example/Base.java": (
+                    "package com.example;\npublic class Base {}\n"
+                ),
+                "src/com/example/Contract.java": (
+                    "package com.example;\npublic interface Contract {}\n"
+                ),
+                "src/com/example/Child.java": (
+                    "package com.example;\n"
+                    "public class Child extends Base implements Contract {}\n"
+                ),
+            }
+        )
+        ctx = create_context(project, None)
+        records, contexts = _capture_processed_context(
+            ctx, get_source_files(ctx), project
+        )
+        original = contexts["java"]
+        restored = build_context_from_records(records)
+        _assert_serialized_registry_is_complete(records, restored)
+
+        original_resolver = original.get_resolver("java")
+        restored_resolver = restored.get_resolver("java")
+        assert original_resolver is not None
+        assert restored_resolver is not None
+        original_child = _entity_by_fqn(original, "com.example.Child")
+        restored_child = _entity_by_fqn(restored, "com.example.Child")
+
+        for raw_name in ("Base", "Contract", "Missing"):
+            original_result = original_resolver.resolve_type_reference(
+                raw_name, original_child, original
+            )
+            restored_result = restored_resolver.resolve_type_reference(
+                raw_name, restored_child, restored
+            )
+            assert (
+                original_result.status,
+                original_result.value,
+                original_result.candidates,
+                original_result.reason,
+            ) == (
+                restored_result.status,
+                restored_result.value,
+                restored_result.candidates,
+                restored_result.reason,
+            )
+
+        assert original_child.superclass == restored_child.superclass
+        assert original_child.implements == restored_child.implements
