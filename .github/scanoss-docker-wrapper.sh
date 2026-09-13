@@ -59,6 +59,11 @@ for ((index = 0; index < ${#args[@]}; index++)); do
   fi
 done
 
+if (( runtime_index >= 0 )) && [[ "${args[0]:-}" == 'run' ]]; then
+  args=("${args[0]}" --user "$(id -u):$(id -g)" "${args[@]:1}")
+  runtime_index=$((runtime_index + 2))
+fi
+
 if (( runtime_index >= 0 )); then
   for ((index = runtime_index + 1; index < ${#args[@]}; index++)); do
     if [[ "${args[index]}" == 'scan' ]]; then
