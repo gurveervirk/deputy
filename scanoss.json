@@ -1,0 +1,77 @@
+{
+  "$schema": "https://raw.githubusercontent.com/scanoss/schema/main/scanoss-settings-schema.json",
+  "settings": {
+    "skip": {
+      "patterns": {
+        "scanning": [
+          ".git/",
+          ".github/",
+          ".deputy/",
+          ".venv/",
+          "venv/",
+          ".tox/",
+          ".nox/",
+          "__pycache__/",
+          "**/__pycache__/",
+          ".pytest_cache/",
+          ".mypy_cache/",
+          ".ruff_cache/",
+          ".coverage",
+          "coverage.xml",
+          "htmlcov/",
+          "build/",
+          "dist/",
+          "site/",
+          "*.egg-info/",
+          "**/*.egg-info/",
+          "node_modules/",
+          "target/",
+          "scanoss.json",
+          "uv.lock",
+          "**/*.pyc",
+          "**/*.pyo",
+          "**/*.so",
+          "**/*.dylib",
+          "**/*.class"
+        ],
+        "fingerprinting": [
+          ".git/",
+          ".github/",
+          ".deputy/",
+          ".venv/",
+          "venv/",
+          ".tox/",
+          ".nox/",
+          "__pycache__/",
+          "**/__pycache__/",
+          ".pytest_cache/",
+          ".mypy_cache/",
+          ".ruff_cache/",
+          ".coverage",
+          "coverage.xml",
+          "htmlcov/",
+          "build/",
+          "dist/",
+          "site/",
+          "*.egg-info/",
+          "**/*.egg-info/",
+          "node_modules/",
+          "target/",
+          "scanoss.json",
+          "uv.lock",
+          "**/*.pyc",
+          "**/*.pyo",
+          "**/*.so",
+          "**/*.dylib",
+          "**/*.class"
+        ]
+      }
+    },
+    "file_snippet": {
+      "dependency_analysis": false
+    }
+  },
+  "bom": {
+    "include": []
+  }
+}

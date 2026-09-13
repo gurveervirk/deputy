@@ -1,0 +1,39 @@
+name: Code Provenance
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  actions: read
+  checks: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  code-provenance:
+    name: Code Provenance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Scan changed source
+        uses: scanoss/gha-code-scan@d3c8f659544885761c8e3b96743ea14b830474aa
+        with:
+          github.token: ${{ github.token }}
+          scanMode: delta
+          scanPath: .
+          scanFiles: true
+          skipSnippets: false
+          dependencies.enabled: false
+          settingsFilepath: scanoss.json
+          policies: undeclared
+          policies.halt_on_failure: false
+          halt_on_error: true
+          matchAnnotations: true
