@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from deproc.core.context import Context
@@ -162,6 +163,7 @@ def _process_files(
     files: list,
     base_path: str,
     entity_record_kwargs: dict | None = None,
+    context_sink: Callable[[str, Context], None] | None = None,
 ) -> tuple[list[dict], dict[str, str]]:
     records = []
     relpath_to_fqn = {}
@@ -201,6 +203,8 @@ def _process_files(
 
         logger.debug("linking %d %s source files", len(source_files), lang)
         linker.link_files(source_files, lang_ctx)
+        if context_sink is not None:
+            context_sink(lang, lang_ctx)
 
         module_exports = None
         if lang == "python":

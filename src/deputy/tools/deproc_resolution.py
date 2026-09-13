@@ -27,6 +27,7 @@ class DeprocResolutionResult:
     unresolved: tuple[dict, ...] = ()
     inaccessible: tuple[dict, ...] = ()
     ambiguous: tuple[dict, ...] = ()
+    candidates: tuple[dict, ...] = ()
 
 
 class DeprocResolutionAdapter:
@@ -73,6 +74,69 @@ class DeprocResolutionAdapter:
             )
         )
 
+    def _result_from_ids(
+        self,
+        language: str,
+        status: ResolutionStatus,
+        reason: str | None,
+        resolved_ids: set[str] | None = None,
+        unresolved_ids: set[str] | None = None,
+        inaccessible_ids: set[str] | None = None,
+        ambiguous_ids: set[str] | None = None,
+        candidate_ids: set[str] | None = None,
+    ) -> DeprocResolutionResult:
+        resolved_ids = resolved_ids or set()
+        unresolved_ids = unresolved_ids or set()
+        inaccessible_ids = inaccessible_ids or set()
+        ambiguous_ids = ambiguous_ids or set()
+        if candidate_ids is None:
+            candidate_ids = set(ambiguous_ids)
+            candidate_ids.update(inaccessible_ids)
+            if status is ResolutionStatus.RESOLVED:
+                candidate_ids.update(resolved_ids)
+        return DeprocResolutionResult(
+            language=language,
+            status=status,
+            reason=reason,
+            resolved=self._records(resolved_ids),
+            unresolved=self._records(unresolved_ids),
+            inaccessible=self._records(inaccessible_ids),
+            ambiguous=self._records(ambiguous_ids),
+            candidates=self._records(candidate_ids),
+        )
+
+    def _adapt_resolver_result(self, language: str, result) -> DeprocResolutionResult:
+        resolved_ids: set[str] = set(getattr(result, "resolved_ids", ()))
+        unresolved_ids: set[str] = set(getattr(result, "unresolved_ids", ()))
+        inaccessible_ids: set[str] = set(getattr(result, "inaccessible_ids", ()))
+        ambiguous_ids: set[str] = set(getattr(result, "ambiguous_ids", ()))
+        candidate_values = getattr(result, "candidates", None)
+        candidate_ids = set(candidate_values) if candidate_values is not None else None
+        status = getattr(result, "status", None)
+        if not isinstance(status, ResolutionStatus):
+            status = (
+                ResolutionStatus.RESOLVED
+                if resolved_ids
+                else ResolutionStatus.UNRESOLVED
+            )
+        if status is ResolutionStatus.AMBIGUOUS and not ambiguous_ids:
+            ambiguous_ids.update(candidate_ids or resolved_ids)
+        if status is ResolutionStatus.INACCESSIBLE and not inaccessible_ids:
+            inaccessible_ids.update(candidate_ids or set())
+        value = getattr(result, "value", None)
+        if status is ResolutionStatus.RESOLVED and value is not None:
+            resolved_ids.add(value)
+        return self._result_from_ids(
+            language,
+            status,
+            getattr(result, "reason", None),
+            resolved_ids,
+            unresolved_ids,
+            inaccessible_ids,
+            ambiguous_ids,
+            candidate_ids,
+        )
+
     def resolve(
         self,
         module_fqn: str,
@@ -88,21 +152,7 @@ class DeprocResolutionAdapter:
             return DeprocResolutionResult(language=selected_language)
 
         result = resolver.resolve(module_fqn, symbol_name, self.context)
-        status = getattr(result, "status", None) or (
-            ResolutionStatus.RESOLVED
-            if result.resolved_ids
-            else ResolutionStatus.UNRESOLVED
-        )
-        assert isinstance(status, ResolutionStatus)
-        return DeprocResolutionResult(
-            language=selected_language,
-            status=status,
-            reason=getattr(result, "reason", None),
-            resolved=self._records(result.resolved_ids),
-            unresolved=self._records(result.unresolved_ids),
-            inaccessible=self._records(getattr(result, "inaccessible_ids", set())),
-            ambiguous=self._records(getattr(result, "ambiguous_ids", set())),
-        )
+        return self._adapt_resolver_result(selected_language, result)
 
     def resolve_type_reference(
         self,
@@ -118,12 +168,26 @@ class DeprocResolutionAdapter:
                 language="java", status=ResolutionStatus.UNRESOLVED
             )
         result = resolve_type_reference(raw_name, owner, self.context)
-        return DeprocResolutionResult(
-            language="java",
-            status=result.status,
-            reason=result.reason,
-            resolved=self._records({result.value} if result.value else set()),
-            ambiguous=self._records(set(result.candidates)),
+        candidate_ids = set(result.candidates)
+        resolved_ids = (
+            {result.value}
+            if result.status is ResolutionStatus.RESOLVED and result.value is not None
+            else set()
+        )
+        ambiguous_ids = (
+            candidate_ids if result.status is ResolutionStatus.AMBIGUOUS else set()
+        )
+        inaccessible_ids = (
+            candidate_ids if result.status is ResolutionStatus.INACCESSIBLE else set()
+        )
+        return self._result_from_ids(
+            "java",
+            result.status,
+            result.reason,
+            resolved_ids=resolved_ids,
+            inaccessible_ids=inaccessible_ids,
+            ambiguous_ids=ambiguous_ids,
+            candidate_ids=candidate_ids,
         )
 
 

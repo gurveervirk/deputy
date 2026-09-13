@@ -2,6 +2,9 @@ import json
 import os
 import tempfile
 
+from deproc.core.context import Context
+from deproc.core.interfaces.resolver import ResolutionStatus
+
 from deputy.core import create_context
 from deputy.database.sqlite import (
     get_branch_entities,
@@ -66,6 +69,53 @@ def _run_sync(db, project_dir: str, branch: str = "main") -> list[dict]:
     upsert_branch_entities(db, branch, [r["id"] for r in records])
     db.commit()
     return records
+
+
+def _capture_processed_context(
+    ctx: Context, files: list, base_path: str
+) -> tuple[list[dict], dict[str, Context]]:
+    contexts: dict[str, Context] = {}
+    records, _ = _process_files(
+        ctx,
+        files,
+        base_path,
+        context_sink=lambda language, linked: contexts.__setitem__(language, linked),
+    )
+    return records, contexts
+
+
+def _entity_by_fqn(context: Context, fqn: str):
+    return next(
+        entity
+        for entity in context.entity_registry.values()
+        if getattr(entity, "fqn", None) == fqn
+    )
+
+
+def _resolution_snapshot(result) -> tuple:
+    return (
+        result.status,
+        result.reason,
+        getattr(result, "value", None),
+        tuple(sorted(getattr(result, "resolved_ids", ()) or ())),
+        tuple(sorted(getattr(result, "unresolved_ids", ()) or ())),
+        tuple(sorted(getattr(result, "inaccessible_ids", ()) or ())),
+        tuple(sorted(getattr(result, "ambiguous_ids", ()) or ())),
+        tuple(sorted(getattr(result, "candidates", ()) or ())),
+    )
+
+
+def _assert_serialized_registry_is_complete(
+    records: list[dict], context: Context
+) -> None:
+    restored_ids = {entity.id for entity in context.entity_registry.values()}
+    for record in records:
+        assert record["id"] in restored_ids
+
+    for entity in context.entity_registry.values():
+        parent_id = getattr(entity, "parent_id", None)
+        if parent_id is not None:
+            assert context.entity_registry.get(parent_id) is not None
 
 
 class TestPythonExportEndToEnd:
@@ -137,6 +187,68 @@ class TestPythonExportEndToEnd:
         assert result.status == "unresolved"
         assert result.resolved == ()
 
+    def test_semantic_queries_survive_sync_record_round_trip(self, db):
+        project = _write_project(
+            {
+                "pkg/base.py": (
+                    "__all__ = ['Base', 'Hidden']\n"
+                    "class Base:\n"
+                    "    pass\n"
+                    "class Hidden:\n"
+                    "    pass\n"
+                ),
+                "pkg/facade.py": ("from .base import *\n__all__ = ['Base']\n"),
+                "pkg/child.py": (
+                    "from .base import Base\nclass Child(Base):\n    pass\n"
+                ),
+                "pkg/first.py": "class Thing:\n    pass\n",
+                "pkg/second.py": "class Thing:\n    pass\n",
+                "pkg/ambiguous.py": (
+                    "from .first import Thing\nfrom .second import Thing\n"
+                ),
+            }
+        )
+        ctx = create_context(project, None)
+        records, contexts = _capture_processed_context(
+            ctx, get_source_files(ctx), project
+        )
+        original = contexts["python"]
+        restored = build_context_from_records(records)
+        _assert_serialized_registry_is_complete(records, restored)
+
+        original_resolver = original.get_resolver("python")
+        restored_resolver = restored.get_resolver("python")
+        assert original_resolver is not None
+        assert restored_resolver is not None
+
+        for module_fqn, symbol_name in (
+            ("pkg.facade", "Base"),
+            ("pkg.facade", "Hidden"),
+            ("pkg.child", "Base"),
+        ):
+            assert _resolution_snapshot(
+                original_resolver.resolve(module_fqn, symbol_name, original)
+            ) == _resolution_snapshot(
+                restored_resolver.resolve(module_fqn, symbol_name, restored)
+            )
+
+        original_ambiguous = original_resolver.resolve(
+            "pkg.ambiguous", "Thing", original
+        )
+        restored_ambiguous = restored_resolver.resolve(
+            "pkg.ambiguous", "Thing", restored
+        )
+        assert original_ambiguous.status is ResolutionStatus.AMBIGUOUS
+        assert _resolution_snapshot(original_ambiguous) == _resolution_snapshot(
+            restored_ambiguous
+        )
+
+        original_child = _entity_by_fqn(original, "pkg.child.Child")
+        restored_child = _entity_by_fqn(restored, "pkg.child.Child")
+        assert original_resolver._class_mro_ids(
+            original_child.id, original, {}, set()
+        ) == restored_resolver._class_mro_ids(restored_child.id, restored, {}, set())
+
 
 class TestJavaTypeReferenceEndToEnd:
     def test_superclass_resolved_and_projected(self, db):
@@ -160,6 +272,14 @@ class TestJavaTypeReferenceEndToEnd:
         assert len(bases) == 1
         assert bases[0]["is_resolved"] == 1
         assert bases[0]["base_full_path"] == "com.example.Base"
+
+        type_result = DeprocResolutionAdapter(db, "main").resolve_type_reference(
+            child["id"], "Base"
+        )
+        assert type_result.status == "resolved"
+        assert [r["full_path"] for r in type_result.resolved] == ["com.example.Base"]
+        assert type_result.ambiguous == ()
+        assert [r["full_path"] for r in type_result.candidates] == ["com.example.Base"]
 
         child_meta = json.loads(child["metadata_json"])
         assert child_meta["resolved_bases"][0]["is_resolved"] is True
@@ -644,3 +764,134 @@ class TestResolveJavaTypeReferencesDirect:
             if getattr(entity, "fqn", None) == "com.example.Child"
         ]
         assert child_entities
+
+    def test_adapter_preserves_resolved_candidates_for_mixed_visibility(self, db):
+        project = _write_project(
+            {
+                "src/moda/module-info.java": (
+                    "module mod.a { requires mod.b; requires mod.c; }\n"
+                ),
+                "src/moda/moda/consumer/Use.java": (
+                    "package moda.consumer;\n"
+                    "import static modb.api.Owner.VALUE;\n"
+                    "import static modc.api.Owner.VALUE;\n"
+                    "public class Use { int value = VALUE; }\n"
+                ),
+                "src/modb/module-info.java": ("module mod.b { exports modb.api; }\n"),
+                "src/modb/modb/api/Owner.java": (
+                    "package modb.api;\n"
+                    "public class Owner { public static int VALUE; }\n"
+                ),
+                "src/modc/module-info.java": "module mod.c {}\n",
+                "src/modc/modc/api/Owner.java": (
+                    "package modc.api;\n"
+                    "public class Owner { public static int VALUE; }\n"
+                ),
+            }
+        )
+        _run_sync(db, project)
+
+        result = DeprocResolutionAdapter(db, "main").resolve(
+            "moda.consumer.Use", "VALUE", language="java"
+        )
+
+        assert result.status is ResolutionStatus.RESOLVED
+        assert result.reason is None
+        assert [record["full_path"] for record in result.resolved] == [
+            "modb.api.Owner.VALUE"
+        ]
+        assert [record["full_path"] for record in result.inaccessible] == [
+            "modc.api.Owner.VALUE"
+        ]
+        assert result.ambiguous == ()
+        assert [record["full_path"] for record in result.candidates] == [
+            "modb.api.Owner.VALUE"
+        ]
+
+    def test_semantic_queries_survive_sync_record_round_trip(self, db):
+        project = _write_project(
+            {
+                "src/com/example/Base.java": (
+                    "package com.example;\npublic class Base {}\n"
+                ),
+                "src/com/example/Contract.java": (
+                    "package com.example;\npublic interface Contract {}\n"
+                ),
+                "src/com/example/Child.java": (
+                    "package com.example;\n"
+                    "public class Child extends Base implements Contract {}\n"
+                ),
+                "src/com/other/Hidden.java": ("package com.other;\nclass Hidden {}\n"),
+                "src/com/example/UseHidden.java": (
+                    "package com.example;\n"
+                    "import com.other.Hidden;\n"
+                    "public class UseHidden {}\n"
+                ),
+                "src/com/first/Thing.java": (
+                    "package com.first;\npublic class Thing {}\n"
+                ),
+                "src/com/second/Thing.java": (
+                    "package com.second;\npublic class Thing {}\n"
+                ),
+                "src/com/example/Ambiguous.java": (
+                    "package com.example;\n"
+                    "import com.first.*;\n"
+                    "import com.second.*;\n"
+                    "public class Ambiguous {}\n"
+                ),
+            }
+        )
+        ctx = create_context(project, None)
+        records, contexts = _capture_processed_context(
+            ctx, get_source_files(ctx), project
+        )
+        original = contexts["java"]
+        restored = build_context_from_records(records)
+        _assert_serialized_registry_is_complete(records, restored)
+
+        original_resolver = original.get_resolver("java")
+        restored_resolver = restored.get_resolver("java")
+        assert original_resolver is not None
+        assert restored_resolver is not None
+        original_child = _entity_by_fqn(original, "com.example.Child")
+        restored_child = _entity_by_fqn(restored, "com.example.Child")
+
+        for raw_name in ("Base", "Contract", "Missing"):
+            original_result = original_resolver.resolve_type_reference(
+                raw_name, original_child, original
+            )
+            restored_result = restored_resolver.resolve_type_reference(
+                raw_name, restored_child, restored
+            )
+            assert _resolution_snapshot(original_result) == _resolution_snapshot(
+                restored_result
+            )
+
+        original_hidden = _entity_by_fqn(original, "com.example.UseHidden")
+        restored_hidden = _entity_by_fqn(restored, "com.example.UseHidden")
+        original_hidden_result = original_resolver.resolve_type_reference(
+            "Hidden", original_hidden, original
+        )
+        restored_hidden_result = restored_resolver.resolve_type_reference(
+            "Hidden", restored_hidden, restored
+        )
+        assert original_hidden_result.status is ResolutionStatus.INACCESSIBLE
+        assert _resolution_snapshot(original_hidden_result) == _resolution_snapshot(
+            restored_hidden_result
+        )
+
+        original_ambiguous = _entity_by_fqn(original, "com.example.Ambiguous")
+        restored_ambiguous = _entity_by_fqn(restored, "com.example.Ambiguous")
+        original_result = original_resolver.resolve_type_reference(
+            "Thing", original_ambiguous, original
+        )
+        restored_result = restored_resolver.resolve_type_reference(
+            "Thing", restored_ambiguous, restored
+        )
+        assert original_result.status is ResolutionStatus.AMBIGUOUS
+        assert _resolution_snapshot(original_result) == _resolution_snapshot(
+            restored_result
+        )
+
+        assert original_child.superclass == restored_child.superclass
+        assert original_child.implements == restored_child.implements
