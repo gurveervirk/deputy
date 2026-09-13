@@ -34,6 +34,8 @@ SCANOSS generates file and snippet fingerprints on the GitHub Actions runner and
 
 The runtime image is pinned to `ghcr.io/scanoss/scanoss-py@sha256:38b006ea5ebbc7972d46f1affd066a950b2349246abd1c5ee30fca3e1d8eff94`, which is the immutable multi-platform manifest resolved from `ghcr.io/scanoss/scanoss-py:v1.52.1`. The manifest has Linux amd64 and arm64 images.
 
+The v1.52.1 runtime has built-in filters for hidden paths, non-code extensions, and `example`/`examples` folders. The pinned GitHub Action does not expose the corresponding runtime flags, so the workflow installs `.github/scanoss-docker-wrapper.sh` for the scan step only. The wrapper delegates delta-copy calls unchanged and appends `--all-hidden --all-extensions --all-folders` only to the exact pinned runtime's `scan` call. This preserves the original paths and keeps the `scanoss.json` exclusions as the deliberate policy for generated and transient content. Debug logging is enabled during calibration so hosted logs can show fingerprinting of changed authored files that would otherwise be filtered.
+
 The workflow uses `pull_request`, does not execute repository-provided scripts, and does not use secrets. Same-repository scans use only `checks: write`, `contents: read`, and `pull-requests: write`; the fork safe-skip path requests no permissions. The workflow does not use `pull_request_target`. Private repositories follow the same fingerprint and metadata data-flow; repository access is limited by the workflow permissions.
 
 Generated outputs, caches, environments, package locks, and build artifacts are excluded in `scanoss.json`. Authored source, tests, documentation, scripts, and workflow/action files remain eligible for scanning unless a later reviewed exclusion is added.
