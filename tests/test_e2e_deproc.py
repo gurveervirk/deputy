@@ -238,9 +238,10 @@ class TestPythonExportEndToEnd:
         restored_ambiguous = restored_resolver.resolve(
             "pkg.ambiguous", "Thing", restored
         )
-        assert original_ambiguous.status is restored_ambiguous.status
         assert original_ambiguous.status is ResolutionStatus.AMBIGUOUS
-        assert original_ambiguous.candidates == restored_ambiguous.candidates
+        assert _resolution_snapshot(original_ambiguous) == _resolution_snapshot(
+            restored_ambiguous
+        )
 
         original_child = _entity_by_fqn(original, "pkg.child.Child")
         restored_child = _entity_by_fqn(restored, "pkg.child.Child")
