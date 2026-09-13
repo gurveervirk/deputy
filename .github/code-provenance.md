@@ -1,6 +1,8 @@
 # Code provenance checks
 
-The `Code Provenance` workflow runs for pull requests targeting `main`. It uses SCANOSS in delta mode, so the scan focuses on files changed by the pull request. File and snippet matching are enabled; dependency analysis remains disabled because dependency and license policy is handled separately.
+The `Code Provenance` workflow runs for pull requests targeting `main`. For pull requests from the base repository it uses SCANOSS in delta mode, so the scan focuses on files changed by the pull request. File and snippet matching are enabled; dependency analysis remains disabled because dependency and license policy is handled separately.
+
+Fork pull requests take a visible safe-skip path. The scanner does not check out or execute fork code because the pull-request token is restricted. The safe-skip job emits a notice; maintainers should review the change from a trusted branch before relying on a provenance result.
 
 A match means that SCANOSS found a likely match in its indexed open-source knowledge base. It is a review signal about possible reuse, not proof that code is plagiarized or that a legal conclusion has been reached.
 
@@ -30,6 +32,8 @@ The policy will become merge-blocking only after representative pull requests es
 
 SCANOSS generates file and snippet fingerprints on the GitHub Actions runner and sends fingerprints and scan metadata to the configured SCANOSS service. The workflow does not intentionally upload repository source text to that service. The action also writes scan results to GitHub Actions artifacts and publishes summaries, checks, annotations, and pull-request comments through the GitHub token.
 
-The workflow uses `pull_request`, does not execute repository-provided scripts, and does not use secrets. Fork pull requests receive a restricted token from GitHub, so comments or check updates may be unavailable and should be treated as an infrastructure limitation. Private repositories follow the same fingerprint and metadata data-flow; repository access is limited by the workflow permissions.
+The runtime image is pinned to `ghcr.io/scanoss/scanoss-py@sha256:38b006ea5ebbc7972d46f1affd066a950b2349246abd1c5ee30fca3e1d8eff94`, which is the immutable multi-platform manifest resolved from `ghcr.io/scanoss/scanoss-py:v1.52.1`. The manifest has Linux amd64 and arm64 images.
 
-Generated outputs, caches, environments, package locks, and workflow configuration are excluded in `scanoss.json`. Authored source, tests, and documentation remain eligible for scanning unless a later reviewed exclusion is added.
+The workflow uses `pull_request`, does not execute repository-provided scripts, and does not use secrets. Same-repository scans use only `checks: write`, `contents: read`, and `pull-requests: write`; the fork safe-skip path requests no permissions. The workflow does not use `pull_request_target`. Private repositories follow the same fingerprint and metadata data-flow; repository access is limited by the workflow permissions.
+
+Generated outputs, caches, environments, package locks, and build artifacts are excluded in `scanoss.json`. Authored source, tests, documentation, scripts, and workflow/action files remain eligible for scanning unless a later reviewed exclusion is added.

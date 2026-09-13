@@ -5,7 +5,6 @@
       "patterns": {
         "scanning": [
           ".git/",
-          ".github/",
           ".deputy/",
           ".venv/",
           "venv/",
@@ -36,7 +35,6 @@
         ],
         "fingerprinting": [
           ".git/",
-          ".github/",
           ".deputy/",
           ".venv/",
           "venv/",
