@@ -96,11 +96,12 @@ def _resolution_snapshot(result) -> tuple:
     return (
         result.status,
         result.reason,
-        tuple(sorted(result.resolved_ids)),
-        tuple(sorted(result.unresolved_ids)),
-        tuple(sorted(result.inaccessible_ids)),
-        tuple(sorted(result.ambiguous_ids)),
-        tuple(sorted(result.candidates)),
+        getattr(result, "value", None),
+        tuple(sorted(getattr(result, "resolved_ids", ()) or ())),
+        tuple(sorted(getattr(result, "unresolved_ids", ()) or ())),
+        tuple(sorted(getattr(result, "inaccessible_ids", ()) or ())),
+        tuple(sorted(getattr(result, "ambiguous_ids", ()) or ())),
+        tuple(sorted(getattr(result, "candidates", ()) or ())),
     )
 
 
@@ -763,6 +764,49 @@ class TestResolveJavaTypeReferencesDirect:
         ]
         assert child_entities
 
+    def test_adapter_preserves_resolved_candidates_for_mixed_visibility(self, db):
+        project = _write_project(
+            {
+                "src/moda/module-info.java": (
+                    "module mod.a { requires mod.b; requires mod.c; }\n"
+                ),
+                "src/moda/moda/consumer/Use.java": (
+                    "package moda.consumer;\n"
+                    "import static modb.api.Owner.VALUE;\n"
+                    "import static modc.api.Owner.VALUE;\n"
+                    "public class Use { int value = VALUE; }\n"
+                ),
+                "src/modb/module-info.java": ("module mod.b { exports modb.api; }\n"),
+                "src/modb/modb/api/Owner.java": (
+                    "package modb.api;\n"
+                    "public class Owner { public static int VALUE; }\n"
+                ),
+                "src/modc/module-info.java": "module mod.c {}\n",
+                "src/modc/modc/api/Owner.java": (
+                    "package modc.api;\n"
+                    "public class Owner { public static int VALUE; }\n"
+                ),
+            }
+        )
+        _run_sync(db, project)
+
+        result = DeprocResolutionAdapter(db, "main").resolve(
+            "moda.consumer.Use", "VALUE", language="java"
+        )
+
+        assert result.status is ResolutionStatus.RESOLVED
+        assert result.reason is None
+        assert [record["full_path"] for record in result.resolved] == [
+            "modb.api.Owner.VALUE"
+        ]
+        assert [record["full_path"] for record in result.inaccessible] == [
+            "modc.api.Owner.VALUE"
+        ]
+        assert result.ambiguous == ()
+        assert [record["full_path"] for record in result.candidates] == [
+            "modb.api.Owner.VALUE"
+        ]
+
     def test_semantic_queries_survive_sync_record_round_trip(self, db):
         project = _write_project(
             {
@@ -818,27 +862,22 @@ class TestResolveJavaTypeReferencesDirect:
             restored_result = restored_resolver.resolve_type_reference(
                 raw_name, restored_child, restored
             )
-            assert (
-                original_result.status,
-                original_result.value,
-                original_result.candidates,
-                original_result.reason,
-            ) == (
-                restored_result.status,
-                restored_result.value,
-                restored_result.candidates,
-                restored_result.reason,
+            assert _resolution_snapshot(original_result) == _resolution_snapshot(
+                restored_result
             )
 
         original_hidden = _entity_by_fqn(original, "com.example.UseHidden")
         restored_hidden = _entity_by_fqn(restored, "com.example.UseHidden")
-        for owner, context, resolver in (
-            (original_hidden, original, original_resolver),
-            (restored_hidden, restored, restored_resolver),
-        ):
-            result = resolver.resolve_type_reference("Hidden", owner, context)
-            assert result.status is ResolutionStatus.INACCESSIBLE
-            assert result.candidates
+        original_hidden_result = original_resolver.resolve_type_reference(
+            "Hidden", original_hidden, original
+        )
+        restored_hidden_result = restored_resolver.resolve_type_reference(
+            "Hidden", restored_hidden, restored
+        )
+        assert original_hidden_result.status is ResolutionStatus.INACCESSIBLE
+        assert _resolution_snapshot(original_hidden_result) == _resolution_snapshot(
+            restored_hidden_result
+        )
 
         original_ambiguous = _entity_by_fqn(original, "com.example.Ambiguous")
         restored_ambiguous = _entity_by_fqn(restored, "com.example.Ambiguous")
@@ -848,9 +887,10 @@ class TestResolveJavaTypeReferencesDirect:
         restored_result = restored_resolver.resolve_type_reference(
             "Thing", restored_ambiguous, restored
         )
-        assert original_result.status is restored_result.status
         assert original_result.status is ResolutionStatus.AMBIGUOUS
-        assert original_result.candidates == restored_result.candidates
+        assert _resolution_snapshot(original_result) == _resolution_snapshot(
+            restored_result
+        )
 
         assert original_child.superclass == restored_child.superclass
         assert original_child.implements == restored_child.implements

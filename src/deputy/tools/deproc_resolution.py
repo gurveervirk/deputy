@@ -89,11 +89,11 @@ class DeprocResolutionAdapter:
         unresolved_ids = unresolved_ids or set()
         inaccessible_ids = inaccessible_ids or set()
         ambiguous_ids = ambiguous_ids or set()
-        candidate_ids = candidate_ids or set()
-        candidate_ids.update(ambiguous_ids)
-        candidate_ids.update(inaccessible_ids)
-        if status is ResolutionStatus.RESOLVED:
-            candidate_ids.update(resolved_ids)
+        if candidate_ids is None:
+            candidate_ids = set(ambiguous_ids)
+            candidate_ids.update(inaccessible_ids)
+            if status is ResolutionStatus.RESOLVED:
+                candidate_ids.update(resolved_ids)
         return DeprocResolutionResult(
             language=language,
             status=status,
@@ -110,7 +110,8 @@ class DeprocResolutionAdapter:
         unresolved_ids: set[str] = set(getattr(result, "unresolved_ids", ()))
         inaccessible_ids: set[str] = set(getattr(result, "inaccessible_ids", ()))
         ambiguous_ids: set[str] = set(getattr(result, "ambiguous_ids", ()))
-        candidate_ids: set[str] = set(getattr(result, "candidates", ()))
+        candidate_values = getattr(result, "candidates", None)
+        candidate_ids = set(candidate_values) if candidate_values is not None else None
         status = getattr(result, "status", None)
         if not isinstance(status, ResolutionStatus):
             status = (
@@ -121,7 +122,7 @@ class DeprocResolutionAdapter:
         if status is ResolutionStatus.AMBIGUOUS and not ambiguous_ids:
             ambiguous_ids.update(candidate_ids or resolved_ids)
         if status is ResolutionStatus.INACCESSIBLE and not inaccessible_ids:
-            inaccessible_ids.update(candidate_ids)
+            inaccessible_ids.update(candidate_ids or set())
         value = getattr(result, "value", None)
         if status is ResolutionStatus.RESOLVED and value is not None:
             resolved_ids.add(value)
