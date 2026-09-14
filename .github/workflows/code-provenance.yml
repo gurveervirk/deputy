@@ -1,0 +1,64 @@
+name: Code Provenance
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions: {}
+
+jobs:
+  code-provenance:
+    name: Code Provenance
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Enable authored scan surface
+        env:
+          SCANOSS_RUNTIME_IMAGE: ghcr.io/scanoss/scanoss-py@sha256:38b006ea5ebbc7972d46f1affd066a950b2349246abd1c5ee30fca3e1d8eff94
+        run: |
+          mkdir -p "$RUNNER_TEMP/scanoss-bin"
+          install -m 0755 .github/scanoss-docker-wrapper.sh "$RUNNER_TEMP/scanoss-bin/docker"
+          echo "SCANOSS_REAL_DOCKER=$(command -v docker)" >> "$GITHUB_ENV"
+          echo "SCANOSS_RUNTIME_IMAGE=$SCANOSS_RUNTIME_IMAGE" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/scanoss-bin" >> "$GITHUB_PATH"
+      - name: Scan changed source
+        uses: scanoss/gha-code-scan@d3c8f659544885761c8e3b96743ea14b830474aa
+        with:
+          github.token: ${{ github.token }}
+          runtimeContainer: ghcr.io/scanoss/scanoss-py@sha256:38b006ea5ebbc7972d46f1affd066a950b2349246abd1c5ee30fca3e1d8eff94
+          scanMode: delta
+          scanPath: .
+          scanFiles: true
+          skipSnippets: false
+          dependencies.enabled: false
+          settingsFilepath: scanoss.json
+          policies: undeclared
+          policies.halt_on_failure: false
+          halt_on_error: true
+          matchAnnotations: true
+          debug: true
+
+  code-provenance-fork:
+    name: Code Provenance (fork safe skip)
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report safe skip
+        env:
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          echo "Code Provenance safely skipped for fork pull request from ${HEAD_REPOSITORY}."
+          echo "::notice title=Code Provenance::Skipped safely for a fork pull request; no fork code was checked out or executed."
