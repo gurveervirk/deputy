@@ -51,6 +51,7 @@ args=("$@")
 runtime_index=-1
 scan_index=-1
 delta_copy_index=-1
+runner_user_operation=0
 
 for ((index = 0; index < ${#args[@]}; index++)); do
   if [[ "${args[index]}" == "$SCANOSS_RUNTIME_IMAGE" ]]; then
@@ -59,7 +60,14 @@ for ((index = 0; index < ${#args[@]}; index++)); do
   fi
 done
 
-if (( runtime_index >= 0 )) && [[ "${args[0]:-}" == 'run' ]]; then
+if (( runtime_index >= 0 )); then
+  operation_index=$((runtime_index + 1))
+  if [[ "${args[operation_index]:-}" == 'scan' || ( "${args[operation_index]:-}" == 'delta' && "${args[operation_index + 1]:-}" == 'copy' ) ]]; then
+    runner_user_operation=1
+  fi
+fi
+
+if (( runner_user_operation == 1 )) && [[ "${args[0]:-}" == 'run' ]]; then
   args=("${args[0]}" --user "$(id -u):$(id -g)" "${args[@]:1}")
   runtime_index=$((runtime_index + 2))
 fi
