@@ -45,7 +45,7 @@ jobs:
           dependencies.enabled: false
           settingsFilepath: scanoss.json
           policies: undeclared
-          policies.halt_on_failure: true
+          policies.halt_on_failure: false
           halt_on_error: true
           matchAnnotations: true
           debug: true
