@@ -43,6 +43,7 @@ jobs:
           scanFiles: true
           skipSnippets: false
           dependencies.enabled: false
+          api.url: http://127.0.0.1:9
           settingsFilepath: scanoss.json
           policies: undeclared
           policies.halt_on_failure: false
