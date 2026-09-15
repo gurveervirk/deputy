@@ -20,6 +20,7 @@ from deputy.database.sqlite import (
     upsert_branch_entities,
     upsert_branch_file,
     upsert_entity,
+    upsert_inheritance_pin,
 )
 from deputy.tools.core import run_sync
 from deputy.tools.deproc_resolution import (
@@ -56,7 +57,7 @@ def _run_sync(db, project_dir: str, branch: str = "main") -> list[dict]:
     for record in records:
         upsert_entity(db, **record)
 
-    resolve_all_inherits(db, records, branch=branch)
+    python_mro_results = resolve_all_inherits(db, records, branch=branch)
 
     for record in records:
         if record["type"] == "CLASS" or (
@@ -65,7 +66,12 @@ def _run_sync(db, project_dir: str, branch: str = "main") -> list[dict]:
         ):
             upsert_entity(db, **record)
 
-    eager_resolve_all_inherited_members(db, records, branch)
+    eager_resolve_all_inherited_members(
+        db,
+        records,
+        branch,
+        python_mro_results=python_mro_results,
+    )
     upsert_branch_entities(db, branch, [r["id"] for r in records])
     db.commit()
     return records
@@ -248,6 +254,72 @@ class TestPythonExportEndToEnd:
         assert original_resolver._class_mro_ids(
             original_child.id, original, {}, set()
         ) == restored_resolver._class_mro_ids(restored_child.id, restored, {}, set())
+
+
+class TestPythonInheritanceEndToEnd:
+    def test_sync_uses_deproc_mro_and_projects_inherited_members(self, db):
+        project = _write_project(
+            {
+                "pkg/base.py": "class Base:\n    def run(self):\n        pass\n",
+                "pkg/child.py": (
+                    "from .base import Base\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.base.Base")
+        base_method = next(r for r in records if r["full_path"] == "pkg.base.Base.run")
+        bases = get_direct_bases(db, child["id"])
+        assert len(bases) == 1
+        assert bases[0]["base_full_path"] == "pkg.base.Base"
+        assert bases[0]["base_entity_id"] == base["id"]
+        assert bases[0]["is_resolved"] == 1
+        assert bases[0]["relation_kind"] == "inherits"
+
+        adapter = DeprocResolutionAdapter(db, "main")
+        mro = adapter.resolve_python_class_mro(child["id"])
+        inherited = adapter.get_python_inherited_members(child["id"], mro)
+        assert mro.status is ResolutionStatus.RESOLVED
+        assert mro.mro_ids == (child["id"], base["id"])
+        assert inherited.status is ResolutionStatus.RESOLVED
+        assert [(member.name, member.owner_id) for member in inherited.members] == [
+            ("run", base["id"])
+        ]
+
+        synthetic = get_entity_by_id(db, "pkg.child.Child.run")
+        assert synthetic is not None
+        assert (
+            json.loads(synthetic["metadata_json"])["target_entity_id"]
+            == base_method["id"]
+        )
+
+    def test_adapter_applies_deputy_pin_to_ambiguous_python_base(self, db):
+        project = _write_project(
+            {
+                "pkg/a.py": "class Base:\n    def from_a(self):\n        pass\n",
+                "pkg/b.py": "class Base:\n    def from_b(self):\n        pass\n",
+                "pkg/child.py": (
+                    "from .a import *\nfrom .b import *\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.a.Base")
+
+        adapter = DeprocResolutionAdapter(db, "main")
+        ambiguous = adapter.resolve_python_class_mro(child["id"])
+        assert ambiguous.status is ResolutionStatus.AMBIGUOUS
+
+        upsert_inheritance_pin(db, child["id"], "Base", base["id"], "main")
+        db.commit()
+        pinned = DeprocResolutionAdapter(db, "main").resolve_python_class_mro(
+            child["id"]
+        )
+        assert pinned.status is ResolutionStatus.RESOLVED
+        assert pinned.mro_ids == (child["id"], base["id"])
 
 
 class TestJavaTypeReferenceEndToEnd:

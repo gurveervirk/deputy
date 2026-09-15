@@ -9,13 +9,17 @@ from deproc.plugins.java.parser.models import JavaCompilationUnit
 from deproc.plugins.java.utils.serialization import (
     record_to_entity as java_record_to_entity,
 )
-from deproc.plugins.python.parser.models import PythonModule
+from deproc.plugins.python.parser.models import PythonClass, PythonModule
+from deproc.plugins.python.resolver.models import (
+    PythonClassMROResult,
+    PythonInheritedMembersResult,
+)
 from deproc.plugins.python.utils.serialization import (
     record_to_entity as python_record_to_entity,
 )
 
 from deputy.core import create_context
-from deputy.database.sqlite import get_branch_entities
+from deputy.database.sqlite import get_branch_entities, get_inheritance_pin
 
 
 @dataclass(frozen=True)
@@ -188,6 +192,64 @@ class DeprocResolutionAdapter:
             inaccessible_ids=inaccessible_ids,
             ambiguous_ids=ambiguous_ids,
             candidate_ids=candidate_ids,
+        )
+
+    def resolve_python_class_mro(
+        self,
+        class_entity_id: str,
+        base_overrides: dict[tuple[str, str], str] | None = None,
+    ) -> PythonClassMROResult:
+        """Resolve a Python class MRO through deproc's semantic resolver."""
+        resolver = self.context.get_resolver("python")
+        resolve_class_mro = getattr(resolver, "resolve_class_mro", None)
+        if resolve_class_mro is None:
+            return PythonClassMROResult(
+                status=ResolutionStatus.UNRESOLVED,
+                reason="Python class-MRO resolution is unavailable",
+            )
+        if base_overrides is None:
+            base_overrides = {}
+            cls = self.context.entity_registry.get(class_entity_id)
+            if isinstance(cls, PythonClass):
+                for base_name in cls.inherits:
+                    normalized_name = base_name.split("[", 1)[0].strip()
+                    pin = get_inheritance_pin(
+                        self.conn, class_entity_id, base_name, self.branch_name
+                    )
+                    if pin is None and normalized_name != base_name:
+                        pin = get_inheritance_pin(
+                            self.conn,
+                            class_entity_id,
+                            normalized_name,
+                            self.branch_name,
+                        )
+                    if pin is not None:
+                        base_overrides[(class_entity_id, normalized_name)] = pin[
+                            "pinned_entity_id"
+                        ]
+        return resolve_class_mro(
+            class_entity_id,
+            self.context,
+            base_overrides=base_overrides,
+        )
+
+    def get_python_inherited_members(
+        self,
+        class_entity_id: str,
+        mro_result: PythonClassMROResult | None = None,
+    ) -> PythonInheritedMembersResult:
+        """Project inherited Python members from deproc's semantic MRO."""
+        resolver = self.context.get_resolver("python")
+        get_inherited_members = getattr(resolver, "get_inherited_members", None)
+        if get_inherited_members is None:
+            return PythonInheritedMembersResult(
+                status=ResolutionStatus.UNRESOLVED,
+                reason="Python inherited-member resolution is unavailable",
+            )
+        return get_inherited_members(
+            class_entity_id,
+            self.context,
+            mro_result=mro_result,
         )
 
 
