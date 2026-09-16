@@ -233,6 +233,21 @@ class DeprocResolutionAdapter:
             base_overrides=base_overrides,
         )
 
+    def resolve_python_import_alias(
+        self, alias_entity_id: str
+    ) -> DeprocResolutionResult:
+        """Resolve one Python import binding through deproc's semantic resolver."""
+        resolver = self.context.get_resolver("python")
+        resolve_import_alias = getattr(resolver, "resolve_import_alias", None)
+        if resolve_import_alias is None:
+            return DeprocResolutionResult(
+                language="python",
+                status=ResolutionStatus.UNRESOLVED,
+                reason="Python import-alias resolution is unavailable",
+            )
+        result = resolve_import_alias(alias_entity_id, self.context)
+        return self._adapt_resolver_result("python", result)
+
     def get_python_inherited_members(
         self,
         class_entity_id: str,

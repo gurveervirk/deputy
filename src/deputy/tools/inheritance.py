@@ -31,6 +31,18 @@ from deputy.utils.git import get_current_branch
 logger = get_logger("tools.inheritance")
 
 
+def _projection_entities_by_path(
+    conn: sqlite3.Connection, full_path: str, branch: str
+) -> list[dict]:
+    has_branch_entities = conn.execute(
+        "SELECT 1 FROM branch_entities WHERE branch_name = ? LIMIT 1",
+        (branch,),
+    ).fetchone()
+    if has_branch_entities is None:
+        return get_entities_by_path(conn, full_path)
+    return get_entities_by_path(conn, full_path, branch_name=branch)
+
+
 def _java_base_relationships(record: dict) -> list[tuple[str, str]]:
     meta = {}
     with contextlib.suppress(json.JSONDecodeError, TypeError):
@@ -229,12 +241,22 @@ def _python_semantic_base_info(
 def _python_semantic_records(
     conn: sqlite3.Connection,
     records: list[dict],
+    branch: str | None = None,
 ) -> list[dict]:
     by_id = {record["id"]: record for record in records}
-    dependency_rows = conn.execute(
-        """SELECT * FROM entities
-           WHERE json_extract(metadata_json, '$.source') = 'dependency'"""
-    ).fetchall()
+    if branch is None:
+        dependency_rows = conn.execute(
+            """SELECT * FROM entities
+               WHERE json_extract(metadata_json, '$.source') = 'dependency'"""
+        ).fetchall()
+    else:
+        dependency_rows = conn.execute(
+            """SELECT e.* FROM entities e
+               JOIN branch_entities be ON be.entity_id = e.id
+               WHERE be.branch_name = ?
+                 AND json_extract(e.metadata_json, '$.source') = 'dependency'""",
+            (branch,),
+        ).fetchall()
     for row in dependency_rows:
         record = dict(row)
         by_id.setdefault(record["id"], record)
@@ -246,7 +268,9 @@ def _resolve_python_inherits(
     records: list[dict],
     branch: str | None,
 ) -> tuple[dict[str, PythonClassMROResult], Context]:
-    context = build_context_from_records(_python_semantic_records(conn, records))
+    context = build_context_from_records(
+        _python_semantic_records(conn, records, branch=branch)
+    )
     resolver = context.get_resolver("python")
     resolve_class_mro = getattr(resolver, "resolve_class_mro", None)
     if resolve_class_mro is None:
@@ -283,13 +307,21 @@ def resolve_all_inherits(
         class_entity_id = record["id"]
         delete_class_bases_by_class(conn, class_entity_id)
         if branch is not None:
-            if parent_classes:
-                placeholders = ",".join("?" for _ in parent_classes)
+            pin_names = {
+                pin_name
+                for parent_class in parent_classes
+                for pin_name in (
+                    parent_class,
+                    _normalize_python_base_name(parent_class),
+                )
+            }
+            if pin_names:
+                placeholders = ",".join("?" for _ in pin_names)
                 conn.execute(
                     f"""DELETE FROM inheritance_pins
                         WHERE class_entity_id = ? AND branch_name = ?
                         AND base_name NOT IN ({placeholders})""",
-                    (class_entity_id, branch, *parent_classes),
+                    (class_entity_id, branch, *pin_names),
                 )
             else:
                 conn.execute(
@@ -423,7 +455,7 @@ def _create_inherited_base_aliases(
 
         semantic_result = (semantic_members or {}).get(class_entity_id)
         if record.get("language") == "python" and semantic_result is not None:
-            if semantic_result.status is not ResolutionStatus.RESOLVED:
+            if len(semantic_result.mro_ids) < 2:
                 continue
             for member in semantic_result.members:
                 target = get_entity_by_id(conn, member.member_id)
@@ -467,7 +499,7 @@ def _create_inherited_base_aliases(
         seen_member_names: set[str] = set()
 
         for mro_idx, source_fqn in enumerate(mro[1:], 1):
-            source_entities = get_entities_by_path(conn, source_fqn)
+            source_entities = _projection_entities_by_path(conn, source_fqn, branch)
             source_class = next(
                 (e for e in source_entities if e["type"] == "CLASS"), None
             )
@@ -577,7 +609,7 @@ def _create_inherited_inner_class_aliases(
     conn: sqlite3.Connection,
     records: list[dict],
     branch: str,
-    semantic_mros: dict[str, list[str]] | None = None,
+    semantic_mros: dict[str, list[str] | None] | None = None,
 ) -> list[dict]:
     """Pass 2: Walk inner class MRO chains to create synthetic aliases for members accessed through inherited inner classes."""
     created: list[dict] = []
@@ -594,6 +626,8 @@ def _create_inherited_inner_class_aliases(
             and class_entity_id in known_semantic_mros
         ):
             mro = known_semantic_mros[class_entity_id]
+            if mro is None:
+                continue
         else:
             mro = _compute_partial_class_mro(conn, class_entity_id)
         if mro is None or len(mro) < 2:
@@ -608,7 +642,7 @@ def _create_inherited_inner_class_aliases(
         seen_member_full_paths: set[str] = set()
 
         for mro_idx, source_fqn in enumerate(mro[1:], 1):
-            source_entities = get_entities_by_path(conn, source_fqn)
+            source_entities = _projection_entities_by_path(conn, source_fqn, branch)
             source_class = next(
                 (e for e in source_entities if e["type"] == "CLASS"), None
             )
@@ -633,7 +667,9 @@ def _create_inherited_inner_class_aliases(
 
                 inner_class_fqn = inner["full_path"]
 
-                inner_entities = get_entities_by_path(conn, inner_class_fqn)
+                inner_entities = _projection_entities_by_path(
+                    conn, inner_class_fqn, branch
+                )
                 inner_class = next(
                     (e for e in inner_entities if e["type"] == "CLASS"), None
                 )
@@ -700,10 +736,12 @@ def eager_resolve_all_inherited_members(
             records = [dict(r) for r in rows]
 
     if semantic_records:
-        semantic_records = _python_semantic_records(conn, semantic_records)
+        semantic_records = _python_semantic_records(
+            conn, semantic_records, branch=branch
+        )
 
     semantic_members: dict[str, PythonInheritedMembersResult] = {}
-    semantic_mros: dict[str, list[str]] = {}
+    semantic_mros: dict[str, list[str] | None] = {}
     if (
         python_mro_results is None
         and semantic_records
@@ -719,10 +757,13 @@ def eager_resolve_all_inherited_members(
                 semantic_members[class_id] = get_inherited(
                     class_id, context, mro_result=mro_result
                 )
-            semantic_mros[class_id] = [
-                getattr(context.entity_registry.get(entity_id), "fqn", "")
-                for entity_id in mro_result.mro_ids
-            ]
+            if len(mro_result.mro_ids) < 2:
+                semantic_mros[class_id] = None
+            else:
+                semantic_mros[class_id] = [
+                    getattr(context.entity_registry.get(entity_id), "fqn", "")
+                    for entity_id in mro_result.mro_ids
+                ]
 
     clean_inherited_member_entities(
         conn, branch=branch, class_entity_ids=[r["id"] for r in records]
@@ -1006,16 +1047,27 @@ def get_class_inheritance_info(
             )
         else:
             candidates = []
+            status = None
+            reason = None
             bi = base.get("branch_info")
             if bi:
                 with contextlib.suppress(json.JSONDecodeError, TypeError):
-                    candidates = json.loads(bi)
-            unresolved.append(
-                {
-                    "base_full_path": base["base_full_path"],
-                    "candidates": candidates,
-                }
-            )
+                    branch_info = json.loads(bi)
+                    if isinstance(branch_info, dict):
+                        status = branch_info.get("status")
+                        reason = branch_info.get("reason")
+                        candidates = branch_info.get("candidates", [])
+                    elif isinstance(branch_info, list):
+                        candidates = branch_info
+            unresolved_entry = {
+                "base_full_path": base["base_full_path"],
+                "candidates": candidates,
+            }
+            if status is not None:
+                unresolved_entry["status"] = status
+            if reason is not None:
+                unresolved_entry["reason"] = reason
+            unresolved.append(unresolved_entry)
 
     inherited_members = get_inherited_members(conn, class_entity_id, mro)
 

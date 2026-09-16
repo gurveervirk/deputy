@@ -134,6 +134,8 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     for record in records:
         upsert_entity(conn, **record)
 
+    upsert_branch_entities(conn, branch, [r["id"] for r in records])
+    upsert_branch_entities(conn, branch, dep_ids)
     python_mro_results = resolve_all_inherits(conn, records, branch=branch)
 
     for record in records:
