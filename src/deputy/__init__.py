@@ -2,15 +2,16 @@ import contextlib
 import json
 
 import typer
+from deproc.core.interfaces.resolver import ResolutionStatus
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
 
 from deputy.database.sqlite import (
     delete_inheritance_pin,
+    get_branch_entities,
     get_direct_subclasses,
     get_entity_by_id,
-    get_entity_ids_by_fqn,
     get_inheritance_pin,
     get_transitive_subclasses,
     list_inheritance_pins,
@@ -26,6 +27,7 @@ from deputy.tools import (
     run_sync,
     search_entities,
 )
+from deputy.tools.deproc_resolution import DeprocResolutionAdapter
 from deputy.tools.inheritance import eager_resolve_all_inherited_members
 from deputy.tools.utils import _open_database, get_containing_module_fqn
 from deputy.utils.config_file import read_config, write_config
@@ -550,6 +552,7 @@ def pin_inheritance(
         raise typer.Exit(code=1) from None
 
     branch = get_current_branch()
+    branch_records = get_branch_entities(conn, branch)
 
     if list_pins:
         pins = list_inheritance_pins(conn, branch)
@@ -576,7 +579,11 @@ def pin_inheritance(
         raise typer.Exit(code=1)
 
     if remove:
-        ids = get_entity_ids_by_fqn(conn, class_fqn)
+        ids = [
+            record["id"]
+            for record in branch_records
+            if record["full_path"] == class_fqn
+        ]
         if not ids:
             conn.close()
             console.print(f"[red]Class not found:[/red] {class_fqn}")
@@ -584,7 +591,14 @@ def pin_inheritance(
         for eid in ids:
             entity = get_entity_by_id(conn, eid)
             if entity and entity["type"] == "CLASS":
-                pin = get_inheritance_pin(conn, eid, base_name, branch)
+                pin_names = {base_name}
+                if entity.get("language") == "python":
+                    pin_names.add(base_name.split("[", 1)[0].strip())
+                pin = None
+                for candidate_name in pin_names:
+                    pin = get_inheritance_pin(conn, eid, candidate_name, branch)
+                    if pin is not None:
+                        break
                 if pin:
                     pinned_entity = get_entity_by_id(conn, pin["pinned_entity_id"])
                     if pinned_entity:
@@ -610,7 +624,8 @@ def pin_inheritance(
                             }
                         ],
                     )
-                delete_inheritance_pin(conn, eid, base_name, branch)
+                for pin_name in pin_names:
+                    delete_inheritance_pin(conn, eid, pin_name, branch)
                 console.print(f"[green]Removed pin for[/green] {class_fqn}:{base_name}")
                 break
         else:
@@ -628,18 +643,23 @@ def pin_inheritance(
         console.print("[red]Missing entity reference (file_path:lineno)[/red]")
         raise typer.Exit(code=1)
 
-    ids = get_entity_ids_by_fqn(conn, class_fqn)
+    ids = [
+        record["id"] for record in branch_records if record["full_path"] == class_fqn
+    ]
     class_entity_id = None
+    class_entity = None
     for eid in ids:
         entity = get_entity_by_id(conn, eid)
         if entity and entity["type"] == "CLASS":
             class_entity_id = eid
+            class_entity = entity
             break
 
     if not class_entity_id:
         conn.close()
         console.print(f"[red]Class not found:[/red] {class_fqn}")
         raise typer.Exit(code=1)
+    assert class_entity is not None
 
     parts = entity_ref.rsplit(":", 2)
     lineno = int(parts[1]) if len(parts) > 1 else None
@@ -658,7 +678,9 @@ def pin_inheritance(
         console.print(f"[red]Cannot determine module for class {class_fqn}[/red]")
         raise typer.Exit(code=1)
 
-    module_entities = get_entity_ids_by_fqn(conn, module_fqn)
+    module_entities = [
+        record["id"] for record in branch_records if record["full_path"] == module_fqn
+    ]
     module_entity_id = next(iter(module_entities)) if module_entities else None
 
     if not module_entity_id:
@@ -668,10 +690,16 @@ def pin_inheritance(
 
     rows = conn.execute(
         """SELECT id FROM entities
+           JOIN branch_entities ON branch_entities.entity_id = entities.id
            WHERE type = 'IMPORT_ALIAS'
+           AND branch_entities.branch_name = ?
            AND full_path = ?
            AND json_extract(metadata_json, '$.lineno') = ?""",
-        (f"{module_fqn}.{base_name}", lineno),
+        (
+            branch,
+            f"{module_fqn}.{base_name.split('[', 1)[0].strip()}",
+            lineno,
+        ),
     ).fetchall()
     candidates = [dict(r) for r in rows]
 
@@ -702,31 +730,44 @@ def pin_inheritance(
         conn.close()
         console.print(f"[red]Entity not found: {candidates[0]['id']}[/red]")
         raise typer.Exit(code=1)
-    alias_meta = json.loads(import_alias_entity["metadata_json"])
-    import_stmt = get_entity_by_id(conn, import_alias_entity["parent_id"])
-    target_entity = None
-    if import_stmt:
-        import_path = import_stmt.get("name", "")
-        original_name = alias_meta.get("original_name", "")
-        target_fqn = f"{import_path}.{original_name}"
-        target_ids = get_entity_ids_by_fqn(conn, target_fqn)
-        target_entity = None
-        for tid in target_ids:
-            te = get_entity_by_id(conn, tid)
-            if te and te["type"] == "CLASS":
-                target_entity = te
-                break
-    if target_entity is None:
-        conn.close()
-        console.print(f"[red]Entity at {entity_ref} does not resolve to a class[/red]")
-        raise typer.Exit(code=1)
-    pinned_entity_id = target_entity["id"]
-    upsert_inheritance_pin(conn, class_entity_id, base_name, pinned_entity_id, branch)
-    conn.execute(
-        "DELETE FROM class_bases WHERE class_entity_id = ? AND base_full_path = ?",
-        (class_entity_id, base_name),
+    target_result = DeprocResolutionAdapter(conn, branch).resolve_python_import_alias(
+        import_alias_entity["id"]
     )
-    pinned_fqn = target_entity["full_path"] if target_entity else base_name
+    target_classes = [
+        candidate
+        for candidate in target_result.resolved
+        if candidate["type"] == "CLASS"
+    ]
+    if (
+        target_result.status is not ResolutionStatus.RESOLVED
+        or len(target_classes) != 1
+    ):
+        conn.close()
+        if target_result.status is ResolutionStatus.AMBIGUOUS:
+            message = "resolves to multiple classes"
+        elif target_result.reason:
+            message = target_result.reason
+        else:
+            message = "does not resolve to a class"
+        console.print(f"[red]Entity at {entity_ref} {message}[/red]")
+        raise typer.Exit(code=1)
+    target_entity = target_classes[0]
+    pinned_entity_id = target_entity["id"]
+    pin_base_name = (
+        base_name.split("[", 1)[0].strip()
+        if class_entity.get("language") == "python"
+        else base_name
+    )
+    upsert_inheritance_pin(
+        conn, class_entity_id, pin_base_name, pinned_entity_id, branch
+    )
+    base_names = {base_name, pin_base_name}
+    placeholders = ",".join("?" for _ in base_names)
+    conn.execute(
+        f"DELETE FROM class_bases WHERE class_entity_id = ? AND base_full_path IN ({placeholders})",
+        (class_entity_id, *base_names),
+    )
+    pinned_fqn = target_entity["full_path"]
     upsert_class_bases(
         conn,
         class_entity_id,

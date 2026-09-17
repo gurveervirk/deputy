@@ -2,9 +2,11 @@ import json
 import os
 import tempfile
 
+import pytest
 from deproc.core.context import Context
 from deproc.core.interfaces.resolver import ResolutionStatus
 
+from deputy import pin_inheritance
 from deputy.core import create_context
 from deputy.database.sqlite import (
     get_branch_entities,
@@ -13,13 +15,16 @@ from deputy.database.sqlite import (
     get_direct_subclasses,
     get_direct_subinterfaces,
     get_entity_by_id,
+    get_entity_by_path,
     get_entity_ids_by_fqn,
+    get_inheritance_pin,
     init_schema,
     open_database,
     set_config,
     upsert_branch_entities,
     upsert_branch_file,
     upsert_entity,
+    upsert_inheritance_pin,
 )
 from deputy.tools.core import run_sync
 from deputy.tools.deproc_resolution import (
@@ -29,6 +34,7 @@ from deputy.tools.deproc_resolution import (
 from deputy.tools.inheritance import (
     clean_inherited_member_entities,
     eager_resolve_all_inherited_members,
+    get_class_inheritance_info,
     resolve_all_inherits,
 )
 from deputy.tools.resolve import InteractiveResolver
@@ -56,7 +62,7 @@ def _run_sync(db, project_dir: str, branch: str = "main") -> list[dict]:
     for record in records:
         upsert_entity(db, **record)
 
-    resolve_all_inherits(db, records, branch=branch)
+    python_mro_results = resolve_all_inherits(db, records, branch=branch)
 
     for record in records:
         if record["type"] == "CLASS" or (
@@ -65,7 +71,12 @@ def _run_sync(db, project_dir: str, branch: str = "main") -> list[dict]:
         ):
             upsert_entity(db, **record)
 
-    eager_resolve_all_inherited_members(db, records, branch)
+    eager_resolve_all_inherited_members(
+        db,
+        records,
+        branch,
+        python_mro_results=python_mro_results,
+    )
     upsert_branch_entities(db, branch, [r["id"] for r in records])
     db.commit()
     return records
@@ -248,6 +259,433 @@ class TestPythonExportEndToEnd:
         assert original_resolver._class_mro_ids(
             original_child.id, original, {}, set()
         ) == restored_resolver._class_mro_ids(restored_child.id, restored, {}, set())
+
+
+class TestPythonInheritanceEndToEnd:
+    def test_sync_uses_deproc_mro_and_projects_inherited_members(self, db):
+        project = _write_project(
+            {
+                "pkg/base.py": "class Base:\n    def run(self):\n        pass\n",
+                "pkg/child.py": (
+                    "from .base import Base\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.base.Base")
+        base_method = next(r for r in records if r["full_path"] == "pkg.base.Base.run")
+        bases = get_direct_bases(db, child["id"])
+        assert len(bases) == 1
+        assert bases[0]["base_full_path"] == "pkg.base.Base"
+        assert bases[0]["base_entity_id"] == base["id"]
+        assert bases[0]["is_resolved"] == 1
+        assert bases[0]["relation_kind"] == "inherits"
+
+        adapter = DeprocResolutionAdapter(db, "main")
+        mro = adapter.resolve_python_class_mro(child["id"])
+        inherited = adapter.get_python_inherited_members(child["id"], mro)
+        assert mro.status is ResolutionStatus.RESOLVED
+        assert mro.mro_ids == (child["id"], base["id"])
+        assert inherited.status is ResolutionStatus.RESOLVED
+        assert [(member.name, member.owner_id) for member in inherited.members] == [
+            ("run", base["id"])
+        ]
+
+        synthetic = get_entity_by_id(db, "pkg.child.Child.run")
+        assert synthetic is not None
+        assert (
+            json.loads(synthetic["metadata_json"])["target_entity_id"]
+            == base_method["id"]
+        )
+
+    def test_inheritance_info_uses_branch_local_deproc_member_identity(
+        self, db, monkeypatch
+    ):
+        project = _write_project(
+            {
+                "pkg/base.py": "class Base:\n    def run(self):\n        pass\n",
+                "pkg/child.py": (
+                    "from .base import Base\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.base.Base")
+        base_method = next(r for r in records if r["full_path"] == "pkg.base.Base.run")
+        base_module = next(r for r in records if r["full_path"] == "pkg.base")
+
+        feature_module = dict(base_module)
+        feature_module["id"] = "feature-base-module"
+        feature_module_meta = json.loads(feature_module["metadata_json"])
+        feature_module_meta["type_ids"] = ["feature-base"]
+        feature_module["metadata_json"] = json.dumps(feature_module_meta)
+
+        feature_base = dict(base)
+        feature_base["id"] = "feature-base"
+        feature_base["parent_id"] = feature_module["id"]
+        feature_base_meta = json.loads(feature_base["metadata_json"])
+        feature_base_meta["parent_id"] = feature_module["id"]
+        feature_base_meta["method_ids"] = ["feature-base-run"]
+        feature_base["metadata_json"] = json.dumps(feature_base_meta)
+
+        feature_method = dict(base_method)
+        feature_method["id"] = "feature-base-run"
+        feature_method["parent_id"] = feature_base["id"]
+        feature_method_meta = json.loads(feature_method["metadata_json"])
+        feature_method_meta["parent_id"] = feature_base["id"]
+        feature_method["metadata_json"] = json.dumps(feature_method_meta)
+
+        for record in (feature_module, feature_base, feature_method):
+            upsert_entity(db, **record)
+        upsert_branch_entities(
+            db,
+            "feature",
+            [feature_module["id"], feature_base["id"], feature_method["id"]],
+        )
+        db.commit()
+
+        monkeypatch.setattr(
+            "deputy.tools.inheritance.get_current_branch", lambda: "main"
+        )
+
+        def unexpected_global_path_lookup(*args, **kwargs):
+            pytest.fail("Python inherited-member query used global FQN lookup")
+
+        monkeypatch.setattr(
+            "deputy.tools.inheritance.get_entities_by_path",
+            unexpected_global_path_lookup,
+        )
+
+        info = get_class_inheritance_info(db, child["id"])
+        inherited_methods = info["inherited_members"]["METHOD"]
+
+        assert [member["id"] for member in inherited_methods] == [base_method["id"]]
+        assert inherited_methods[0]["_inherited_from"] == base["full_path"]
+        assert inherited_methods[0]["id"] != feature_method["id"]
+
+    def test_adapter_applies_deputy_pin_to_ambiguous_python_base(self, db):
+        project = _write_project(
+            {
+                "pkg/a.py": "class Base:\n    def from_a(self):\n        pass\n",
+                "pkg/b.py": "class Base:\n    def from_b(self):\n        pass\n",
+                "pkg/child.py": (
+                    "from .a import *\nfrom .b import *\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.a.Base")
+
+        adapter = DeprocResolutionAdapter(db, "main")
+        ambiguous = adapter.resolve_python_class_mro(child["id"])
+        assert ambiguous.status is ResolutionStatus.AMBIGUOUS
+
+        upsert_inheritance_pin(db, child["id"], "Base", base["id"], "main")
+        db.commit()
+        pinned = DeprocResolutionAdapter(db, "main").resolve_python_class_mro(
+            child["id"]
+        )
+        assert pinned.status is ResolutionStatus.RESOLVED
+        assert pinned.mro_ids == (child["id"], base["id"])
+
+    def test_structured_python_branch_info_is_unpacked_for_presentation(self, db):
+        project = _write_project(
+            {
+                "pkg/a.py": "class Base:\n    pass\n",
+                "pkg/b.py": "class Base:\n    pass\n",
+                "pkg/child.py": (
+                    "from .a import *\nfrom .b import *\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+
+        info = get_class_inheritance_info(db, child["id"])
+
+        assert len(info["unresolved_bases"]) == 1
+        unresolved = info["unresolved_bases"][0]
+        assert unresolved["status"] == "ambiguous"
+        assert {candidate["full_path"] for candidate in unresolved["candidates"]} == {
+            "pkg.a.Base",
+            "pkg.b.Base",
+        }
+        assert all(
+            isinstance(candidate, dict) for candidate in unresolved["candidates"]
+        )
+
+    def test_python_dependency_resolution_is_branch_local_and_matches_adapter(self, db):
+        project = _write_project(
+            {
+                "pkg/child.py": (
+                    "from dependency import Base\nclass Child(Base):\n    pass\n"
+                )
+            }
+        )
+        records = _run_sync(db, project)
+
+        dependency_rows = []
+        for branch in ("main", "feature"):
+            module_id = f"{branch}-dependency-module"
+            base_id = f"{branch}-dependency-base"
+            dependency_rows.extend(
+                [
+                    {
+                        "id": module_id,
+                        "language": "python",
+                        "full_path": "dependency",
+                        "name": "dependency",
+                        "type": "PYTHON_MODULE",
+                        "metadata_json": json.dumps(
+                            {
+                                "fqn": "dependency",
+                                "path": f"{branch}/dependency.py",
+                                "type_ids": [base_id],
+                                "source": "dependency",
+                                "package_name": "dependency",
+                            }
+                        ),
+                    },
+                    {
+                        "id": base_id,
+                        "language": "python",
+                        "full_path": "dependency.Base",
+                        "name": "Base",
+                        "type": "CLASS",
+                        "parent_id": module_id,
+                        "metadata_json": json.dumps(
+                            {
+                                "fqn": "dependency.Base",
+                                "parent_id": module_id,
+                                "source": "dependency",
+                                "package_name": "dependency",
+                            }
+                        ),
+                    },
+                ]
+            )
+
+        for row in dependency_rows:
+            upsert_entity(db, **row)
+        upsert_branch_entities(
+            db, "main", ["main-dependency-module", "main-dependency-base"]
+        )
+        upsert_branch_entities(
+            db, "feature", ["feature-dependency-module", "feature-dependency-base"]
+        )
+        db.commit()
+
+        results = resolve_all_inherits(db, records, branch="main")
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        adapter = DeprocResolutionAdapter(db, "main")
+        adapter_result = adapter.resolve_python_class_mro(child["id"])
+
+        assert results[child["id"]].status is ResolutionStatus.RESOLVED
+        assert results[child["id"]].mro_ids == (
+            child["id"],
+            "main-dependency-base",
+        )
+        assert adapter_result.mro_ids == results[child["id"]].mro_ids
+        assert "feature-dependency-base" not in adapter_result.mro_ids
+
+    def test_partial_python_mro_uses_one_eager_projection_policy(self, db):
+        project = _write_project(
+            {
+                "pkg/base.py": (
+                    "class Base:\n"
+                    "    def run(self):\n"
+                    "        pass\n"
+                    "    class Inner:\n"
+                    "        def nested(self):\n"
+                    "            pass\n"
+                ),
+                "pkg/child.py": (
+                    "from .base import Base\nclass Child(Base, Missing):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+
+        assert get_entity_by_path(db, "pkg.child.Child.run") is not None
+        assert get_entity_by_path(db, "pkg.child.Child.nested") is not None
+        assert get_class_inheritance_info(db, child["id"])["mro"] is None
+
+    def test_normalized_generic_python_pin_survives_sync_and_rehydration(self, db):
+        project = _write_project(
+            {
+                "pkg/a.py": "class Base:\n    pass\n",
+                "pkg/b.py": "class Base:\n    pass\n",
+                "pkg/child.py": (
+                    "from .a import *\n"
+                    "from .b import *\n"
+                    "class Child(Base[T]):\n"
+                    "    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.a.Base")
+
+        upsert_inheritance_pin(db, child["id"], "Base", base["id"], "main")
+        db.commit()
+        resolve_all_inherits(db, records, branch="main")
+        db.commit()
+
+        pin = get_inheritance_pin(db, child["id"], "Base", "main")
+        fresh_result = DeprocResolutionAdapter(db, "main").resolve_python_class_mro(
+            child["id"]
+        )
+
+        assert pin is not None
+        assert fresh_result.status is ResolutionStatus.RESOLVED
+        assert fresh_result.mro_ids == (child["id"], base["id"])
+
+    def test_ancestor_python_pin_propagates_to_descendant_mro(self, db, monkeypatch):
+        project = _write_project(
+            {
+                "pkg/a.py": "class Base:\n    def from_a(self):\n        pass\n",
+                "pkg/b.py": "class Base:\n    def from_b(self):\n        pass\n",
+                "pkg/parent.py": (
+                    "from .a import *\n"
+                    "from .b import *\n"
+                    "class Parent(Base):\n"
+                    "    pass\n"
+                ),
+                "pkg/child.py": (
+                    "from .parent import Parent\nclass Child(Parent):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+        parent = next(r for r in records if r["full_path"] == "pkg.parent.Parent")
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.a.Base")
+
+        upsert_inheritance_pin(db, parent["id"], "Base", base["id"], "main")
+        db.commit()
+
+        results = resolve_all_inherits(db, records, branch="main")
+        db.commit()
+        adapter = DeprocResolutionAdapter(db, "main")
+        resolver = adapter.context.get_resolver("python")
+        assert resolver is not None
+        unpinned_result = resolver.resolve_class_mro(child["id"], adapter.context)
+        fresh_result = adapter.resolve_python_class_mro(child["id"])
+
+        assert results[parent["id"]].mro_ids == (parent["id"], base["id"])
+        assert results[child["id"]].status is ResolutionStatus.RESOLVED
+        assert results[child["id"]].mro_ids == (
+            child["id"],
+            parent["id"],
+            base["id"],
+        )
+        assert unpinned_result.status is ResolutionStatus.AMBIGUOUS
+        assert fresh_result.status is ResolutionStatus.RESOLVED
+        assert fresh_result.mro_ids == results[child["id"]].mro_ids
+
+        fresh_members = DeprocResolutionAdapter(
+            db, "main"
+        ).get_python_inherited_members(child["id"])
+        assert fresh_members.status is ResolutionStatus.RESOLVED
+        assert fresh_members.mro_ids == fresh_result.mro_ids
+        assert [(member.name, member.owner_id) for member in fresh_members.members] == [
+            ("from_a", base["id"])
+        ]
+
+        monkeypatch.setattr(
+            "deputy.tools.inheritance.get_current_branch", lambda: "main"
+        )
+        info = get_class_inheritance_info(db, child["id"])
+        assert [member["id"] for member in info["inherited_members"]["METHOD"]] == [
+            next(r for r in records if r["full_path"] == "pkg.a.Base.from_a")["id"]
+        ]
+
+    def test_inherited_inner_type_is_presented_as_inner_type(self, db, monkeypatch):
+        project = _write_project(
+            {
+                "pkg/base.py": ("class Base:\n    class Inner:\n        pass\n"),
+                "pkg/child.py": (
+                    "from .base import Base\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        inner = next(r for r in records if r["full_path"] == "pkg.base.Base.Inner")
+
+        adapter = DeprocResolutionAdapter(db, "main")
+        mro = adapter.resolve_python_class_mro(child["id"])
+        semantic_members = adapter.get_python_inherited_members(child["id"], mro)
+
+        assert semantic_members.status is ResolutionStatus.RESOLVED
+        assert [
+            (member.name, member.member_id) for member in semantic_members.members
+        ] == [("Inner", inner["id"])]
+
+        monkeypatch.setattr(
+            "deputy.tools.inheritance.get_current_branch", lambda: "main"
+        )
+        info = get_class_inheritance_info(db, child["id"])
+        assert [member["id"] for member in info["inherited_members"]["INNER_TYPE"]] == [
+            inner["id"]
+        ]
+        assert "CLASS" not in info["inherited_members"]
+
+    def test_pin_inheritance_uses_deproc_alias_identity(self, tmp_path, monkeypatch):
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "pkg").mkdir()
+        (project / "pkg/a.py").write_text("class Base:\n    pass\n")
+        (project / "pkg/child.py").write_text(
+            "from .a import Base\nclass Child(Base):\n    pass\n"
+        )
+        db_path = tmp_path / "deputy.db"
+        conn = open_database(str(db_path))
+        init_schema(conn)
+        records = _run_sync(conn, str(project))
+        conn.close()
+
+        calls = []
+        original = DeprocResolutionAdapter.resolve_python_import_alias
+
+        def resolve_alias(adapter, alias_id):
+            calls.append(alias_id)
+            return original(adapter, alias_id)
+
+        monkeypatch.setattr(
+            DeprocResolutionAdapter,
+            "resolve_python_import_alias",
+            resolve_alias,
+        )
+        monkeypatch.setattr(
+            "deputy._open_database", lambda: open_database(str(db_path))
+        )
+        monkeypatch.setattr("deputy.get_current_branch", lambda: "main")
+
+        pin_inheritance(
+            "pkg.child.Child",
+            "Base",
+            "pkg/child.py:1",
+            remove=False,
+            list_pins=False,
+        )
+
+        check = open_database(str(db_path))
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.a.Base")
+        pin = get_inheritance_pin(check, child["id"], "Base", "main")
+        check.close()
+
+        assert calls
+        assert pin is not None
+        assert pin["pinned_entity_id"] == base["id"]
 
 
 class TestJavaTypeReferenceEndToEnd:

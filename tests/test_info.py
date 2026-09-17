@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
-from deputy import _format_range, _get_column_value, _get_file_path
+from deputy import (
+    _format_range,
+    _format_unresolved_bases,
+    _get_column_value,
+    _get_file_path,
+)
 from deputy.database.sqlite import set_config, upsert_branch_entities, upsert_entity
 from deputy.tools.core import _compute_source, get_entity_info
 
@@ -170,6 +175,28 @@ class TestGetColumnValue:
     def test_module_list_columns_missing(self):
         for col in ("requires", "exports", "uses"):
             assert _get_column_value({}, col, {}) == ""
+
+    def test_format_unresolved_bases_unpacks_structured_branch_info(self):
+        entity = {
+            "full_path": "pkg.Child",
+            "_inheritance_info": {
+                "unresolved_bases": [
+                    {
+                        "base_full_path": "Base",
+                        "status": "ambiguous",
+                        "reason": "ambiguous Python base Base",
+                        "candidates": [
+                            {"full_path": "pkg.a.Base"},
+                            {"full_path": "pkg.b.Base"},
+                        ],
+                    }
+                ]
+            },
+        }
+
+        formatted = _format_unresolved_bases(entity)
+
+        assert "Base: pkg.a.Base, pkg.b.Base" in formatted
 
     def test_module_mapping_columns(self):
         meta = {

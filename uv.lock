@@ -159,7 +159,7 @@ source = { editable = "../deproc/deproc-core" }
 
 [[package]]
 name = "deproc-java"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "../deproc/deproc-java" }
 dependencies = [
     { name = "deproc-core" },
@@ -178,7 +178,7 @@ requires-dist = [
 
 [[package]]
 name = "deproc-python"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "../deproc/deproc-python" }
 dependencies = [
     { name = "deproc-core" },

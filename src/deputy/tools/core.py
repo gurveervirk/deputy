@@ -134,7 +134,9 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     for record in records:
         upsert_entity(conn, **record)
 
-    resolve_all_inherits(conn, records, branch=branch)
+    upsert_branch_entities(conn, branch, [r["id"] for r in records])
+    upsert_branch_entities(conn, branch, dep_ids)
+    python_mro_results = resolve_all_inherits(conn, records, branch=branch)
 
     for record in records:
         if record["type"] == "CLASS" or (
@@ -143,7 +145,12 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
         ):
             upsert_entity(conn, **record)
 
-    eager_resolve_all_inherited_members(conn, records, branch)
+    eager_resolve_all_inherited_members(
+        conn,
+        records,
+        branch,
+        python_mro_results=python_mro_results,
+    )
 
     upsert_branch_entities(conn, branch, [r["id"] for r in records])
     upsert_branch_entities(conn, branch, dep_ids)
