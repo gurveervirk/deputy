@@ -264,6 +264,8 @@ class DeprocResolutionAdapter:
                 status=ResolutionStatus.UNRESOLVED,
                 reason="Python inherited-member resolution is unavailable",
             )
+        if mro_result is None:
+            mro_result = self.resolve_python_class_mro(class_entity_id)
         return get_inherited_members(
             class_entity_id,
             self.context,

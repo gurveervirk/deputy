@@ -1016,7 +1016,19 @@ def _deproc_python_inherited_members(
         owner = adapter.records.get(member.owner_id)
         if target is None or owner is None:
             continue
-        display_type = target.get("type")
+        owner_entity = adapter.context.entity_registry.get(member.owner_id)
+        display_type = next(
+            (
+                category
+                for category, member_ids in (
+                    ("METHOD", getattr(owner_entity, "method_ids", ())),
+                    ("PROPERTY", getattr(owner_entity, "property_ids", ())),
+                    ("INNER_TYPE", getattr(owner_entity, "inner_type_ids", ())),
+                )
+                if member.member_id in member_ids
+            ),
+            target.get("type"),
+        )
         if display_type not in {"METHOD", "PROPERTY", "INNER_TYPE"}:
             continue
         entry = dict(target)

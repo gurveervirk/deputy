@@ -547,11 +547,11 @@ class TestPythonInheritanceEndToEnd:
         assert fresh_result.status is ResolutionStatus.RESOLVED
         assert fresh_result.mro_ids == (child["id"], base["id"])
 
-    def test_ancestor_python_pin_propagates_to_descendant_mro(self, db):
+    def test_ancestor_python_pin_propagates_to_descendant_mro(self, db, monkeypatch):
         project = _write_project(
             {
-                "pkg/a.py": "class Base:\n    pass\n",
-                "pkg/b.py": "class Base:\n    pass\n",
+                "pkg/a.py": "class Base:\n    def from_a(self):\n        pass\n",
+                "pkg/b.py": "class Base:\n    def from_b(self):\n        pass\n",
                 "pkg/parent.py": (
                     "from .a import *\n"
                     "from .b import *\n"
@@ -573,9 +573,11 @@ class TestPythonInheritanceEndToEnd:
 
         results = resolve_all_inherits(db, records, branch="main")
         db.commit()
-        fresh_result = DeprocResolutionAdapter(db, "main").resolve_python_class_mro(
-            child["id"]
-        )
+        adapter = DeprocResolutionAdapter(db, "main")
+        resolver = adapter.context.get_resolver("python")
+        assert resolver is not None
+        unpinned_result = resolver.resolve_class_mro(child["id"], adapter.context)
+        fresh_result = adapter.resolve_python_class_mro(child["id"])
 
         assert results[parent["id"]].mro_ids == (parent["id"], base["id"])
         assert results[child["id"]].status is ResolutionStatus.RESOLVED
@@ -584,8 +586,57 @@ class TestPythonInheritanceEndToEnd:
             parent["id"],
             base["id"],
         )
+        assert unpinned_result.status is ResolutionStatus.AMBIGUOUS
         assert fresh_result.status is ResolutionStatus.RESOLVED
         assert fresh_result.mro_ids == results[child["id"]].mro_ids
+
+        fresh_members = DeprocResolutionAdapter(
+            db, "main"
+        ).get_python_inherited_members(child["id"])
+        assert fresh_members.status is ResolutionStatus.RESOLVED
+        assert fresh_members.mro_ids == fresh_result.mro_ids
+        assert [(member.name, member.owner_id) for member in fresh_members.members] == [
+            ("from_a", base["id"])
+        ]
+
+        monkeypatch.setattr(
+            "deputy.tools.inheritance.get_current_branch", lambda: "main"
+        )
+        info = get_class_inheritance_info(db, child["id"])
+        assert [member["id"] for member in info["inherited_members"]["METHOD"]] == [
+            next(r for r in records if r["full_path"] == "pkg.a.Base.from_a")["id"]
+        ]
+
+    def test_inherited_inner_type_is_presented_as_inner_type(self, db, monkeypatch):
+        project = _write_project(
+            {
+                "pkg/base.py": ("class Base:\n    class Inner:\n        pass\n"),
+                "pkg/child.py": (
+                    "from .base import Base\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        inner = next(r for r in records if r["full_path"] == "pkg.base.Base.Inner")
+
+        adapter = DeprocResolutionAdapter(db, "main")
+        mro = adapter.resolve_python_class_mro(child["id"])
+        semantic_members = adapter.get_python_inherited_members(child["id"], mro)
+
+        assert semantic_members.status is ResolutionStatus.RESOLVED
+        assert [
+            (member.name, member.member_id) for member in semantic_members.members
+        ] == [("Inner", inner["id"])]
+
+        monkeypatch.setattr(
+            "deputy.tools.inheritance.get_current_branch", lambda: "main"
+        )
+        info = get_class_inheritance_info(db, child["id"])
+        assert [member["id"] for member in info["inherited_members"]["INNER_TYPE"]] == [
+            inner["id"]
+        ]
+        assert "CLASS" not in info["inherited_members"]
 
     def test_pin_inheritance_uses_deproc_alias_identity(self, tmp_path, monkeypatch):
         project = tmp_path / "project"
