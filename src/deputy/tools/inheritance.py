@@ -211,6 +211,30 @@ def _python_base_overrides(
     return overrides
 
 
+def _python_base_overrides_for_records(
+    conn: sqlite3.Connection,
+    records: list[dict],
+    branch: str | None,
+) -> dict[tuple[str, str], str]:
+    if branch is None:
+        return {}
+
+    overrides: dict[tuple[str, str], str] = {}
+    for record in records:
+        if record.get("language") != "python" or record.get("type") != "CLASS":
+            continue
+        meta = {}
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
+            meta = json.loads(record["metadata_json"])
+        parent_classes = meta.get("parent_classes", [])
+        if not isinstance(parent_classes, list):
+            continue
+        overrides.update(
+            _python_base_overrides(conn, record["id"], parent_classes, branch)
+        )
+    return overrides
+
+
 def _python_semantic_base_info(
     context: Context, base
 ) -> tuple[str, str | None, bool, str | None]:
@@ -268,21 +292,18 @@ def _resolve_python_inherits(
     records: list[dict],
     branch: str | None,
 ) -> tuple[dict[str, PythonClassMROResult], Context]:
-    context = build_context_from_records(
-        _python_semantic_records(conn, records, branch=branch)
-    )
+    semantic_records = _python_semantic_records(conn, records, branch=branch)
+    context = build_context_from_records(semantic_records)
     resolver = context.get_resolver("python")
     resolve_class_mro = getattr(resolver, "resolve_class_mro", None)
     if resolve_class_mro is None:
         return {}, context
 
     results: dict[str, PythonClassMROResult] = {}
+    overrides = _python_base_overrides_for_records(conn, semantic_records, branch)
     for record in records:
         if record["type"] != "CLASS" or record.get("language") != "python":
             continue
-        meta = json.loads(record["metadata_json"])
-        parent_classes = meta.get("parent_classes", [])
-        overrides = _python_base_overrides(conn, record["id"], parent_classes, branch)
         results[record["id"]] = resolve_class_mro(
             record["id"], context, base_overrides=overrides
         )
@@ -962,12 +983,61 @@ def compute_class_mro(
     return result if complete else None
 
 
+def _deproc_python_inherited_members(
+    conn: sqlite3.Connection,
+    class_entity_id: str,
+) -> tuple[bool, dict[str, list[dict]] | None]:
+    branch = get_current_branch()
+    records = get_branch_entities(conn, branch)
+    class_record = next(
+        (
+            record
+            for record in records
+            if record["id"] == class_entity_id
+            and record["type"] == "CLASS"
+            and record.get("language") == "python"
+        ),
+        None,
+    )
+    if class_record is None:
+        return False, None
+
+    adapter = DeprocResolutionAdapter(conn, branch)
+    resolver = adapter.context.get_resolver("python")
+    if resolver is None or not callable(
+        getattr(resolver, "get_inherited_members", None)
+    ):
+        return False, None
+
+    semantic_result = adapter.get_python_inherited_members(class_entity_id)
+    inherited: dict[str, list[dict]] = {}
+    for member in semantic_result.members:
+        target = adapter.records.get(member.member_id)
+        owner = adapter.records.get(member.owner_id)
+        if target is None or owner is None:
+            continue
+        display_type = target.get("type")
+        if display_type not in {"METHOD", "PROPERTY", "INNER_TYPE"}:
+            continue
+        entry = dict(target)
+        entry["_inherited_from"] = owner.get("full_path", "")
+        entry["_mro_index"] = member.mro_depth
+        inherited.setdefault(display_type, []).append(entry)
+    return True, inherited
+
+
 def get_inherited_members(
     conn: sqlite3.Connection,
     class_entity_id: str,
     mro_fqns: list[str] | None = None,
 ) -> dict[str, list[dict]]:
     """Collect inherited methods, properties, and inner types from the MRO, deduped by name."""
+    semantic_available, semantic_members = _deproc_python_inherited_members(
+        conn, class_entity_id
+    )
+    if semantic_available:
+        return semantic_members or {}
+
     if mro_fqns is None:
         mro = compute_class_mro(conn, class_entity_id)
     else:

@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 
+import pytest
 from deproc.core.context import Context
 from deproc.core.interfaces.resolver import ResolutionStatus
 
@@ -299,6 +300,73 @@ class TestPythonInheritanceEndToEnd:
             == base_method["id"]
         )
 
+    def test_inheritance_info_uses_branch_local_deproc_member_identity(
+        self, db, monkeypatch
+    ):
+        project = _write_project(
+            {
+                "pkg/base.py": "class Base:\n    def run(self):\n        pass\n",
+                "pkg/child.py": (
+                    "from .base import Base\nclass Child(Base):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.base.Base")
+        base_method = next(r for r in records if r["full_path"] == "pkg.base.Base.run")
+        base_module = next(r for r in records if r["full_path"] == "pkg.base")
+
+        feature_module = dict(base_module)
+        feature_module["id"] = "feature-base-module"
+        feature_module_meta = json.loads(feature_module["metadata_json"])
+        feature_module_meta["type_ids"] = ["feature-base"]
+        feature_module["metadata_json"] = json.dumps(feature_module_meta)
+
+        feature_base = dict(base)
+        feature_base["id"] = "feature-base"
+        feature_base["parent_id"] = feature_module["id"]
+        feature_base_meta = json.loads(feature_base["metadata_json"])
+        feature_base_meta["parent_id"] = feature_module["id"]
+        feature_base_meta["method_ids"] = ["feature-base-run"]
+        feature_base["metadata_json"] = json.dumps(feature_base_meta)
+
+        feature_method = dict(base_method)
+        feature_method["id"] = "feature-base-run"
+        feature_method["parent_id"] = feature_base["id"]
+        feature_method_meta = json.loads(feature_method["metadata_json"])
+        feature_method_meta["parent_id"] = feature_base["id"]
+        feature_method["metadata_json"] = json.dumps(feature_method_meta)
+
+        for record in (feature_module, feature_base, feature_method):
+            upsert_entity(db, **record)
+        upsert_branch_entities(
+            db,
+            "feature",
+            [feature_module["id"], feature_base["id"], feature_method["id"]],
+        )
+        db.commit()
+
+        monkeypatch.setattr(
+            "deputy.tools.inheritance.get_current_branch", lambda: "main"
+        )
+
+        def unexpected_global_path_lookup(*args, **kwargs):
+            pytest.fail("Python inherited-member query used global FQN lookup")
+
+        monkeypatch.setattr(
+            "deputy.tools.inheritance.get_entities_by_path",
+            unexpected_global_path_lookup,
+        )
+
+        info = get_class_inheritance_info(db, child["id"])
+        inherited_methods = info["inherited_members"]["METHOD"]
+
+        assert [member["id"] for member in inherited_methods] == [base_method["id"]]
+        assert inherited_methods[0]["_inherited_from"] == base["full_path"]
+        assert inherited_methods[0]["id"] != feature_method["id"]
+
     def test_adapter_applies_deputy_pin_to_ambiguous_python_base(self, db):
         project = _write_project(
             {
@@ -478,6 +546,46 @@ class TestPythonInheritanceEndToEnd:
         assert pin is not None
         assert fresh_result.status is ResolutionStatus.RESOLVED
         assert fresh_result.mro_ids == (child["id"], base["id"])
+
+    def test_ancestor_python_pin_propagates_to_descendant_mro(self, db):
+        project = _write_project(
+            {
+                "pkg/a.py": "class Base:\n    pass\n",
+                "pkg/b.py": "class Base:\n    pass\n",
+                "pkg/parent.py": (
+                    "from .a import *\n"
+                    "from .b import *\n"
+                    "class Parent(Base):\n"
+                    "    pass\n"
+                ),
+                "pkg/child.py": (
+                    "from .parent import Parent\nclass Child(Parent):\n    pass\n"
+                ),
+            }
+        )
+        records = _run_sync(db, project)
+        parent = next(r for r in records if r["full_path"] == "pkg.parent.Parent")
+        child = next(r for r in records if r["full_path"] == "pkg.child.Child")
+        base = next(r for r in records if r["full_path"] == "pkg.a.Base")
+
+        upsert_inheritance_pin(db, parent["id"], "Base", base["id"], "main")
+        db.commit()
+
+        results = resolve_all_inherits(db, records, branch="main")
+        db.commit()
+        fresh_result = DeprocResolutionAdapter(db, "main").resolve_python_class_mro(
+            child["id"]
+        )
+
+        assert results[parent["id"]].mro_ids == (parent["id"], base["id"])
+        assert results[child["id"]].status is ResolutionStatus.RESOLVED
+        assert results[child["id"]].mro_ids == (
+            child["id"],
+            parent["id"],
+            base["id"],
+        )
+        assert fresh_result.status is ResolutionStatus.RESOLVED
+        assert fresh_result.mro_ids == results[child["id"]].mro_ids
 
     def test_pin_inheritance_uses_deproc_alias_identity(self, tmp_path, monkeypatch):
         project = tmp_path / "project"

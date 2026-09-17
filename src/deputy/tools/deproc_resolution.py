@@ -208,30 +208,33 @@ class DeprocResolutionAdapter:
                 reason="Python class-MRO resolution is unavailable",
             )
         if base_overrides is None:
-            base_overrides = {}
-            cls = self.context.entity_registry.get(class_entity_id)
-            if isinstance(cls, PythonClass):
-                for base_name in cls.inherits:
-                    normalized_name = base_name.split("[", 1)[0].strip()
-                    pin = get_inheritance_pin(
-                        self.conn, class_entity_id, base_name, self.branch_name
-                    )
-                    if pin is None and normalized_name != base_name:
-                        pin = get_inheritance_pin(
-                            self.conn,
-                            class_entity_id,
-                            normalized_name,
-                            self.branch_name,
-                        )
-                    if pin is not None:
-                        base_overrides[(class_entity_id, normalized_name)] = pin[
-                            "pinned_entity_id"
-                        ]
+            base_overrides = self._python_base_overrides()
         return resolve_class_mro(
             class_entity_id,
             self.context,
             base_overrides=base_overrides,
         )
+
+    def _python_base_overrides(self) -> dict[tuple[str, str], str]:
+        overrides: dict[tuple[str, str], str] = {}
+        for entity in self.context.entity_registry.values():
+            if not isinstance(entity, PythonClass):
+                continue
+            for base_name in entity.inherits:
+                normalized_name = base_name.split("[", 1)[0].strip()
+                pin = get_inheritance_pin(
+                    self.conn, entity.id, base_name, self.branch_name
+                )
+                if pin is None and normalized_name != base_name:
+                    pin = get_inheritance_pin(
+                        self.conn,
+                        entity.id,
+                        normalized_name,
+                        self.branch_name,
+                    )
+                if pin is not None:
+                    overrides[(entity.id, normalized_name)] = pin["pinned_entity_id"]
+        return overrides
 
     def resolve_python_import_alias(
         self, alias_entity_id: str
