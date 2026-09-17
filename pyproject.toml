@@ -10,8 +10,8 @@ license = {text = "Apache-2.0"}
 requires-python = ">=3.12"
 dependencies = [
     "deproc-core>=0.2.0",
-    "deproc-java>=0.2.0",
-    "deproc-python>=0.2.0",
+    "deproc-java>=0.2.1",
+    "deproc-python>=0.2.1",
     "deproc-utils-tree-sitter>=0.1.2",
     "deproc-utils-python-env>=0.1.1",
     "typer>=0.26.8",
