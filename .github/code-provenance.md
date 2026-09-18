@@ -38,6 +38,20 @@ The v1.54.2 runtime has built-in filters for hidden paths, non-code extensions, 
 
 The v1.54.2 client includes the upstream 1.53.2 retry/error handling: HTTP 429 is reported as rate limiting, HTTP 503 as service unavailability, and both honor `Retry-After` with bounded backoff before failing technically. The v1.54.1 fingerprinting skip-pattern fix and v1.54.2 non-zero WFP failure behavior are also included. This refresh does not change the report-only policy or treat an exhausted retry sequence as a clean scan.
 
+## Runtime and alternatives evaluation
+
+The 2026-09-18 v1.54.2 hosted validation reached fingerprinting for authored hidden Markdown/YAML paths in both repositories, then received HTTP 503 responses from `api.osskb.org` with a long server retry interval. The client retried with its bounded backoff and failed technically after the retry limit; it did not produce a clean or policy result. This confirms the runtime error handling while leaving public-service reliability unresolved. `undeclared` remains report-only.
+
+The candidates below were compared against this workflow's source/file/snippet provenance contract, not ordinary dependency SCA:
+
+| Candidate | Matching, evidence, and integration | Data flow, operations, and current decision |
+| --- | --- | --- |
+| SCANOSS | File and snippet matching against public OSSKB; PURL/component, license, source, and line evidence; official delta-capable GitHub Action; raw, CycloneDX, SPDX-Lite, and CSV outputs; path-scoped `bom.include` declarations | Generates fingerprints locally and sends scan metadata/fingerprints to the service. Action and runtime are full-SHA/manifest pinned, and technical failures are distinct from policy findings. Retain as the report-only baseline while service reliability is evaluated. |
+| ScanCode.io / MatchCode | MatchCode toolkit computes file/codebase fingerprints; ScanCode.io provides JSON/XLSX/SPDX/CycloneDX outputs and a GitHub Action. Public documentation says there is no public MatchCode.io instance and current matching is limited to archives/directories/files from Maven and npm packages | A broad public-OSS corpus and service would need to be hosted and maintained. Changed-file PR scanning, declarations, fork handling, failure semantics, and corpus breadth require an experiment; no replacement is active. |
+| Codequiry | Web/source matching with line-level evidence and source links; REST API returns machine-readable results and supports custom CI packaging | The documented API uploads source ZIPs rather than only fingerprints. Public web matching is paid/limited, while public terms describe retention and shared-corpus differences by plan. No official immutable GitHub Action or proven path-scoped baseline/fork/outage contract was found; treat as an experiment only. |
+
+Peer-only similarity tools, dependency-only SCA, license-only scanners, and general code-quality tools are not equivalent source-provenance replacements. Any future alternative must be tested with clean, known-match, approved-match, unrelated-match, service-failure, fork, private-repository, outbound-data, and artifact-retention cases before adoption.
+
 The workflow uses `pull_request`, does not execute repository-provided scripts, and does not use secrets. Same-repository scans use only `checks: write`, `contents: read`, and `pull-requests: write`; the fork safe-skip path requests no permissions. The workflow does not use `pull_request_target`. Private repositories follow the same fingerprint and metadata data-flow; repository access is limited by the workflow permissions.
 
 Generated outputs, caches, environments, package locks, and build artifacts are excluded in `scanoss.json`. Authored source, tests, documentation, scripts, and workflow/action files remain eligible for scanning unless a later reviewed exclusion is added.
