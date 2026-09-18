@@ -110,7 +110,7 @@ if (( delta_copy_index >= 0 )); then
 fi
 
 if (( scan_index >= 0 )); then
-  args+=(--all-hidden --all-extensions --all-folders)
+  args+=(--retry 0 --all-hidden --all-extensions --all-folders)
 fi
 
 exec "$SCANOSS_REAL_DOCKER" "${args[@]}"
