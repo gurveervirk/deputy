@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Enable authored scan surface
         env:
-          SCANOSS_RUNTIME_IMAGE: ghcr.io/scanoss/scanoss-py@sha256:38b006ea5ebbc7972d46f1affd066a950b2349246abd1c5ee30fca3e1d8eff94
+          SCANOSS_RUNTIME_IMAGE: ghcr.io/scanoss/scanoss-py@sha256:33a63229a4e36771dc90d1e7efc79f57e4e57d3a4b5c20cf52ea2c70f964481c
         run: |
           mkdir -p "$RUNNER_TEMP/scanoss-bin"
           install -m 0755 .github/scanoss-docker-wrapper.sh "$RUNNER_TEMP/scanoss-bin/docker"
@@ -37,7 +37,7 @@ jobs:
         uses: scanoss/gha-code-scan@d3c8f659544885761c8e3b96743ea14b830474aa
         with:
           github.token: ${{ github.token }}
-          runtimeContainer: ghcr.io/scanoss/scanoss-py@sha256:38b006ea5ebbc7972d46f1affd066a950b2349246abd1c5ee30fca3e1d8eff94
+          runtimeContainer: ghcr.io/scanoss/scanoss-py@sha256:33a63229a4e36771dc90d1e7efc79f57e4e57d3a4b5c20cf52ea2c70f964481c
           scanMode: delta
           scanPath: .
           scanFiles: true
