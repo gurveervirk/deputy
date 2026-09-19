@@ -44,7 +44,9 @@ for path, identity in undeclared:
 
 if known:
     lines.append("")
-    lines.append("This prototype is report-only; it does not fail the workflow for a match.")
+    lines.append(
+        "This prototype is report-only; it does not fail the workflow for a match."
+    )
 else:
     lines.append("")
     lines.append("No archived content match was reported.")
