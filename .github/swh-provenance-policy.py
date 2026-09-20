@@ -55,6 +55,10 @@ def main():
     evidence_path = Path(sys.argv[3])
     enrichment_status = sys.argv[4] if len(sys.argv) > 4 else "not_requested"
     enrichment_error = sys.argv[5].strip() if len(sys.argv) > 5 else ""
+    enrichment_exit_status = None
+    if len(sys.argv) > 6 and sys.argv[6].strip():
+        enrichment_exit_status = int(sys.argv[6])
+    enrichment_reason = sys.argv[7].strip() if len(sys.argv) > 7 else ""
 
     if not isinstance(result, dict):
         raise ValueError("scanner result must be a JSON object")
@@ -108,6 +112,8 @@ def main():
         "archive_scan": "ok",
         "provenance_enrichment": {
             "status": enrichment_status,
+            "exit_status": enrichment_exit_status,
+            "reason": enrichment_reason or None,
             "error": enrichment_error or None,
         },
         "entries": entries,

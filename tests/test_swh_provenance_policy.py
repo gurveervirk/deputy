@@ -29,6 +29,8 @@ def run_policy(
             str(evidence_path),
             enrichment_status,
             error,
+            "" if enrichment_status == "not_requested" else "0",
+            "" if enrichment_status == "not_requested" else "test enrichment result",
         ],
         cwd=ROOT,
         env={"GITHUB_STEP_SUMMARY": str(summary_path)},
@@ -156,6 +158,8 @@ def test_enrichment_failure_preserves_archive_identity_result(tmp_path):
     assert evidence["archive_scan"] == "ok"
     assert evidence["provenance_enrichment"] == {
         "status": "unavailable",
+        "exit_status": 0,
+        "reason": "test enrichment result",
         "error": "permission denied",
     }
     assert evidence["policy"]["known_content"] == 1

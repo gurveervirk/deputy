@@ -9,6 +9,7 @@ log_path=${5:-"${RUNNER_TEMP:-/tmp}/swh-provenance.log"}
 evidence_path=${6:-"${RUNNER_TEMP:-/tmp}/swh-provenance-evidence.json"}
 enrichment_path=${RUNNER_TEMP:-/tmp}/swh-provenance-enrichment.json
 enrichment_log_path=${RUNNER_TEMP:-/tmp}/swh-provenance-enrichment.log
+enrichment_normalize_log_path=${RUNNER_TEMP:-/tmp}/swh-provenance-enrichment-normalize.log
 config_path=${RUNNER_TEMP:-/tmp}/swh-provenance-config.yml
 cache_home=${RUNNER_TEMP:-/tmp}/swh-provenance-cache
 
@@ -83,6 +84,13 @@ result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 PY
 }
 
+bounded_log_excerpt() {
+  local log_file=$1
+  local excerpt
+  excerpt=$(grep -Eio 'error[^[:cntrl:]]*|fail[^[:cntrl:]]*|permission[^[:cntrl:]]*|denied[^[:cntrl:]]*|unavailable[^[:cntrl:]]*|timed out[^[:cntrl:]]*|json[^[:cntrl:]]*|http[^[:cntrl:]]*|provenance[^[:cntrl:]]*' "$log_file" | tail -n 8 | tr '\n' ' ' | cut -c1-300 || true)
+  printf '%s' "$excerpt"
+}
+
 if (( scan_status != 0 )); then
   printf '%s\n' 'Software Heritage scanner failed before producing a result.' >&2
   exit 2
@@ -101,6 +109,8 @@ fi
 
 enrichment_status=not_requested
 enrichment_error=
+enrichment_exit_status=
+enrichment_reason=
 if [[ "${SWH_PROVENANCE_ENRICHMENT:-disabled}" == "enabled" ]]; then
   set +e
   XDG_CACHE_HOME="$cache_home" \
@@ -116,23 +126,46 @@ if [[ "${SWH_PROVENANCE_ENRICHMENT:-disabled}" == "enabled" ]]; then
   set -e
 
   cat "$enrichment_log_path" >&2
-  enrichment_error=$(tr '\n' ' ' < "$enrichment_log_path" | cut -c1-500)
-  if [[ -z "$enrichment_error" ]]; then
-    enrichment_error="provenance enrichment did not produce a valid result (exit ${enrichment_scan_status})"
-  fi
-  if (( enrichment_scan_status == 0 )) && normalize_result "$enrichment_path"
+  enrichment_exit_status=$enrichment_scan_status
+  : > "$enrichment_normalize_log_path"
+  if (( enrichment_scan_status == 0 )) && normalize_result "$enrichment_path" 2>"$enrichment_normalize_log_path"
   then
     cp -- "$enrichment_path" "$result_path"
     enrichment_status=available
   else
     enrichment_status=unavailable
-    printf '%s\n' "$enrichment_error; archive identities remain available." >&2
+    if (( enrichment_scan_status != 0 )); then
+      enrichment_reason="enrichment scanner exited with status ${enrichment_scan_status}"
+    else
+      enrichment_reason="enrichment produced no valid JSON"
+    fi
+    enrichment_error=$(tr '\n' ' ' < "$enrichment_normalize_log_path" | cut -c1-300 || true)
+    if [[ -z "$enrichment_error" ]]; then
+      enrichment_error=$(bounded_log_excerpt "$enrichment_log_path")
+    fi
+    if [[ -z "$enrichment_error" ]]; then
+      enrichment_error="no relevant scanner diagnostic output"
+    fi
+    printf '%s\n' "Software Heritage provenance enrichment unavailable (exit ${enrichment_scan_status}): ${enrichment_reason}; archive identities remain available." >&2
   fi
 fi
 
+set +e
 python3 .github/swh-provenance-policy.py \
   "$result_path" \
   .github/swh-provenance-allowlist.json \
   "$evidence_path" \
   "$enrichment_status" \
-  "$enrichment_error"
+  "$enrichment_error" \
+  "$enrichment_exit_status" \
+  "$enrichment_reason"
+policy_status=$?
+set -e
+
+if (( policy_status != 0 )); then
+  exit "$policy_status"
+fi
+
+if [[ "$enrichment_status" == "unavailable" && "${SWH_PROVENANCE_ENRICHMENT:-disabled}" == "enabled" ]]; then
+  exit 3
+fi
