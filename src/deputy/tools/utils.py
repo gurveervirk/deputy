@@ -10,7 +10,7 @@ from deproc.plugins.python.utils.exports import build_module_exports
 from deproc.plugins.python.utils.imports import resolve_relative_import_path
 from rich.tree import Tree
 
-from deputy.core import create_context
+from deputy.core import analysis_scope_from_config, create_context
 from deputy.database.sqlite import (
     get_branch_files,
     get_entity_by_id,
@@ -139,20 +139,21 @@ def _detect_file_changes(
     changed: set[str] = set()
     mtime_only: set[str] = set()
     for fmeta in files:
-        record = tracked.get(fmeta.path)
+        logical_path = fmeta.logical_path
+        record = tracked.get(logical_path)
         if record is not None and record[1] == fmeta.mtime and not force:
             continue
-        abs_path = os.path.join(base_path, fmeta.path)
+        abs_path = fmeta.absolute_path or os.path.join(base_path, fmeta.path)
         h = compute_sha256(abs_path)
-        file_hashes[fmeta.path] = h
+        file_hashes[logical_path] = h
         if record is None or record[0] != h or force:
-            logger.debug("file changed: %s (hash mismatch or new)", fmeta.path)
-            changed.add(fmeta.path)
+            logger.debug("file changed: %s (hash mismatch or new)", logical_path)
+            changed.add(logical_path)
         else:
-            logger.debug("file mtime-only: %s", fmeta.path)
-            mtime_only.add(fmeta.path)
+            logger.debug("file mtime-only: %s", logical_path)
+            mtime_only.add(logical_path)
 
-    deleted = set(tracked.keys()) - {f.path for f in files}
+    deleted = set(tracked.keys()) - {f.logical_path for f in files}
     if deleted:
         logger.debug("files deleted: %s", ", ".join(sorted(deleted)))
     return file_hashes, changed, mtime_only, deleted
@@ -192,12 +193,20 @@ def _process_files(
         lang_ctx.entity_registry = EntityRegistry()
 
         source_files = []
+        source_roots: dict[str, dict[str, str]] = {}
         for fmeta in lang_files:
-            abs_path = os.path.join(base_path, fmeta.path)
+            root_path = os.path.abspath(fmeta.root_path or base_path)
+            abs_path = fmeta.absolute_path or os.path.join(root_path, fmeta.path)
+            lang_ctx.base_path = root_path
             logger.debug("parsing: %s", fmeta.path)
             sf = parser.parse_file(abs_path, lang_ctx)
             source_files.append(sf)
-            relpath_to_fqn[fmeta.path] = getattr(sf, "fqn", None) or getattr(
+            source_roots[sf.id] = {
+                "root_id": fmeta.root_id,
+                "root_kind": fmeta.root_kind,
+                "root_path": root_path,
+            }
+            relpath_to_fqn[fmeta.logical_path] = getattr(sf, "fqn", None) or getattr(
                 sf, "module_name", None
             )
 
@@ -210,16 +219,28 @@ def _process_files(
         if lang == "python":
             module_exports = build_module_exports(lang_ctx.entity_registry)
 
+        lang_ctx.base_path = base_path
         for entity in list(lang_ctx.entity_registry.values()):
             kwargs = dict(kwargs_base)
             file_path = getattr(entity, "path", None)
             if file_path and file_path.endswith(".pyi"):
                 kwargs["is_stub"] = True
+            root_metadata = source_roots.get(
+                getattr(getattr(entity, "source_range", None), "source_id", None)
+                or entity.id
+            )
+            if root_metadata == {
+                "root_id": "project",
+                "root_kind": "project",
+                "root_path": os.path.abspath(base_path),
+            }:
+                root_metadata = None
             record = _entity_record(
                 entity,
                 lang_ctx.entity_registry,
                 module_exports,
                 language=lang,
+                root_metadata=root_metadata,
                 **kwargs,
             )
             if record:
@@ -230,7 +251,11 @@ def _process_files(
 
 
 def _is_stale(conn, branch, base_path):
-    ctx = create_context(base_path, conn)
+    ctx = create_context(
+        base_path,
+        conn,
+        scope=analysis_scope_from_config(base_path, read_config()),
+    )
     files = get_source_files(ctx)
     tracked = get_branch_files(conn, branch)
 
@@ -238,7 +263,7 @@ def _is_stale(conn, branch, base_path):
         logger.debug("stale check: no tracked files, needs sync")
         return True
 
-    current_paths = {f.path for f in files}
+    current_paths = {f.logical_path for f in files}
     tracked_paths = set(tracked.keys())
 
     if current_paths != tracked_paths:
@@ -252,7 +277,7 @@ def _is_stale(conn, branch, base_path):
         return True
 
     for fmeta in files:
-        record = tracked.get(fmeta.path)
+        record = tracked.get(fmeta.logical_path)
         if record is not None and record[1] != fmeta.mtime:
             logger.debug("stale check: mtime changed for %s", fmeta.path)
             return True
@@ -319,6 +344,7 @@ def _entity_record(
     package_name=None,
     is_stub=False,
     language="python",
+    root_metadata=None,
 ) -> dict | None:
     if language == "java":
         from deproc.plugins.java.utils.serialization import entity_to_record
@@ -327,17 +353,21 @@ def _entity_record(
 
     record = entity_to_record(entity, module_exports=module_exports, registry=registry)
 
-    if record is None or source == "project":
+    if record is None:
         return record
 
     meta = json.loads(record["metadata_json"])
-    meta["source"] = source
+    if source != "project":
+        meta["source"] = source
 
-    if package_name:
+    if source != "project" and package_name:
         meta["package_name"] = package_name
 
-    if is_stub:
+    if source != "project" and is_stub:
         meta["is_stub"] = True
+
+    if root_metadata:
+        meta.update(root_metadata)
 
     record["metadata_json"] = json.dumps(meta, default=str)
     return record

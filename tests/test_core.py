@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from deputy.core import create_context
+from deputy.core import analysis_scope_from_config, create_context
 from deputy.database.sqlite import SqliteSymbolCache
 
 
@@ -53,3 +53,24 @@ def test_create_context_registers_resolvers():
     ctx = create_context("/base", conn)
     assert ctx.has_resolver("python")
     assert ctx.has_resolver("java")
+
+
+def test_analysis_scope_from_config_resolves_root_paths(tmp_path):
+    scope = analysis_scope_from_config(
+        str(tmp_path / "project"),
+        {
+            "source_roots": "src:generated",
+            "dependency_roots": str(tmp_path / "dependencies"),
+            "analysis_languages": "python",
+            "analysis_extensions": ".py,.pyi",
+        },
+    )
+
+    assert scope.project_roots[0].path == str(tmp_path / "project")
+    assert {root.path for root in scope.source_roots} == {
+        str(tmp_path / "project" / "src"),
+        str(tmp_path / "project" / "generated"),
+    }
+    assert scope.dependency_roots[0].path == str(tmp_path / "dependencies")
+    assert scope.selected_languages == {"python"}
+    assert scope.selected_file_extensions == {".py", ".pyi"}
