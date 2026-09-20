@@ -19,6 +19,14 @@ on:
         description: Head commit to scan
         required: true
         type: string
+      provenance_enrichment:
+        description: Attempt privileged Software Heritage origin enrichment
+        required: false
+        default: disabled
+        type: choice
+        options:
+          - disabled
+          - enabled
 
 permissions: {}
 
@@ -32,6 +40,7 @@ jobs:
     env:
       BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
+      SWH_PROVENANCE_ENRICHMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.provenance_enrichment || 'disabled' }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,6 +56,14 @@ jobs:
         env:
           RUNNER_TEMP: ${{ runner.temp }}
         run: .github/swh-provenance-scan.sh "$BASE_SHA" "$HEAD_SHA"
+      - name: Retain provenance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: swh-provenance-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/swh-provenance-evidence.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   code-provenance-swh-fork:
     name: Code Provenance (Software Heritage fork safe skip)

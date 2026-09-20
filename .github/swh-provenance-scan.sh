@@ -6,6 +6,9 @@ head_sha=${2:?head commit is required}
 delta_dir=${3:-"${RUNNER_TEMP:-/tmp}/swh-provenance-delta"}
 result_path=${4:-"${RUNNER_TEMP:-/tmp}/swh-provenance-result.json"}
 log_path=${5:-"${RUNNER_TEMP:-/tmp}/swh-provenance.log"}
+evidence_path=${6:-"${RUNNER_TEMP:-/tmp}/swh-provenance-evidence.json"}
+enrichment_path=${RUNNER_TEMP:-/tmp}/swh-provenance-enrichment.json
+enrichment_log_path=${RUNNER_TEMP:-/tmp}/swh-provenance-enrichment.log
 config_path=${RUNNER_TEMP:-/tmp}/swh-provenance-config.yml
 cache_home=${RUNNER_TEMP:-/tmp}/swh-provenance-cache
 
@@ -49,13 +52,36 @@ XDG_CACHE_HOME="$cache_home" \
     swh scanner -C "$config_path" scan "$delta_dir" \
     --no-web-ui \
     --output-format json \
-    --provenance \
     --disable-global-patterns \
     --disable-vcs-patterns > "$result_path" 2> "$log_path"
 scan_status=$?
 set -e
 
 cat "$log_path" >&2
+
+normalize_result() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+result_path = Path(sys.argv[1])
+text = result_path.read_text(encoding="utf-8")
+start = text.find("{")
+if start < 0:
+    print("scanner output does not contain a JSON object", file=sys.stderr)
+    raise SystemExit(1)
+try:
+    result, _ = json.JSONDecoder().raw_decode(text[start:])
+except json.JSONDecodeError as error:
+    print(f"scanner output is not valid JSON: {error}", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(result, dict):
+    print("scanner result must be a JSON object", file=sys.stderr)
+    raise SystemExit(1)
+result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+PY
+}
 
 if (( scan_status != 0 )); then
   printf '%s\n' 'Software Heritage scanner failed before producing a result.' >&2
@@ -67,9 +93,46 @@ if grep -Eiq 'error:|traceback|does not have permission|service unavailable|time
   exit 2
 fi
 
-if ! python3 -m json.tool "$result_path" >/dev/null; then
+if ! normalize_result "$result_path"
+then
   printf '%s\n' 'Software Heritage scanner did not produce valid JSON.' >&2
   exit 2
 fi
 
-python3 .github/swh-provenance-policy.py "$result_path" .github/swh-provenance-allowlist.json
+enrichment_status=not_requested
+enrichment_error=
+if [[ "${SWH_PROVENANCE_ENRICHMENT:-disabled}" == "enabled" ]]; then
+  set +e
+  XDG_CACHE_HOME="$cache_home" \
+    SWH_CONFIG_FILENAME="$config_path" \
+    uv tool run --from swh.scanner==0.8.3 \
+      swh scanner -C "$config_path" scan "$delta_dir" \
+      --no-web-ui \
+      --output-format json \
+      --provenance \
+      --disable-global-patterns \
+      --disable-vcs-patterns > "$enrichment_path" 2> "$enrichment_log_path"
+  enrichment_scan_status=$?
+  set -e
+
+  cat "$enrichment_log_path" >&2
+  enrichment_error=$(tr '\n' ' ' < "$enrichment_log_path" | cut -c1-500)
+  if [[ -z "$enrichment_error" ]]; then
+    enrichment_error="provenance enrichment did not produce a valid result (exit ${enrichment_scan_status})"
+  fi
+  if (( enrichment_scan_status == 0 )) && normalize_result "$enrichment_path"
+  then
+    cp -- "$enrichment_path" "$result_path"
+    enrichment_status=available
+  else
+    enrichment_status=unavailable
+    printf '%s\n' "$enrichment_error; archive identities remain available." >&2
+  fi
+fi
+
+python3 .github/swh-provenance-policy.py \
+  "$result_path" \
+  .github/swh-provenance-allowlist.json \
+  "$evidence_path" \
+  "$enrichment_status" \
+  "$enrichment_error"
