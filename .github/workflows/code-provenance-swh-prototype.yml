@@ -1,0 +1,79 @@
+name: Code Provenance (Software Heritage prototype)
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Base commit to compare
+        required: true
+        type: string
+      head_sha:
+        description: Head commit to scan
+        required: true
+        type: string
+      provenance_enrichment:
+        description: Attempt privileged Software Heritage origin enrichment
+        required: false
+        default: disabled
+        type: choice
+        options:
+          - disabled
+          - enabled
+
+permissions: {}
+
+jobs:
+  code-provenance-swh:
+    name: Code Provenance (Software Heritage prototype)
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && vars.SWH_PROVENANCE_PROTOTYPE == 'enabled')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
+      SWH_PROVENANCE_ENRICHMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.provenance_enrichment || 'disabled' }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ env.HEAD_SHA }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: 0.8.3
+          enable-cache: false
+      - name: Scan changed source
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: .github/swh-provenance-scan.sh "$BASE_SHA" "$HEAD_SHA"
+      - name: Retain provenance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: swh-provenance-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/swh-provenance-evidence.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  code-provenance-swh-fork:
+    name: Code Provenance (Software Heritage fork safe skip)
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report safe skip
+        env:
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          echo "Software Heritage provenance safely skipped for fork pull request from ${HEAD_REPOSITORY}."
+          echo "::notice title=Software Heritage provenance::Skipped safely for a fork pull request; no fork code was checked out or executed."
