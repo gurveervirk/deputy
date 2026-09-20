@@ -1,6 +1,6 @@
 [project]
 name = "deputy-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "A code intelligence CLI tool for querying and navigating code entities."
 readme = "README.md"
 authors = [
@@ -9,7 +9,7 @@ authors = [
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12"
 dependencies = [
-    "deproc-core>=0.2.0",
+    "deproc-core>=0.3.0",
     "deproc-java>=0.2.1",
     "deproc-python>=0.2.1",
     "deproc-utils-tree-sitter>=0.1.2",
