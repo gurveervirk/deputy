@@ -70,6 +70,12 @@
     }
   },
   "bom": {
-    "include": []
+    "include": [
+      {
+        "path": "calibration/approved/osskb.c",
+        "purl": "pkg:deb/debian/unoconv",
+        "comment": "Reviewed calibration match for path-scoped declaration"
+      }
+    ]
   }
 }
