@@ -26,6 +26,7 @@
           "node_modules/",
           "target/",
           "scanoss.json",
+          "src/deputy/_version.py",
           "uv.lock",
           "**/*.pyc",
           "**/*.pyo",
@@ -56,6 +57,7 @@
           "node_modules/",
           "target/",
           "scanoss.json",
+          "src/deputy/_version.py",
           "uv.lock",
           "**/*.pyc",
           "**/*.pyo",
@@ -70,6 +72,12 @@
     }
   },
   "bom": {
-    "include": []
+    "include": [],
+    "remove": [
+      {
+        "purl": "pkg:pypi/deputy-cli",
+        "comment": "Ignore self-matches against prior Deputy releases"
+      }
+    ]
   }
 }
