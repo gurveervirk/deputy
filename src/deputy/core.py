@@ -21,12 +21,13 @@ from .database.sqlite import (
 def _configured_paths(base_path: str, value: str | None) -> tuple[str, ...]:
     if value is None:
         return ()
+    items = (item.strip() for item in value.split(os.pathsep))
     return tuple(
         os.path.abspath(os.path.join(base_path, item))
         if not os.path.isabs(item)
         else os.path.abspath(item)
-        for item in value.split(os.pathsep)
-        if item.strip()
+        for item in items
+        if item
     )
 
 
@@ -34,8 +35,12 @@ def analysis_scope_from_config(
     base_path: str, config: dict[str, str] | None = None
 ) -> AnalysisScope:
     values = config or {}
-    project_paths = _configured_paths(base_path, values.get("project_roots"))
-    if "project_roots" not in values:
+    if "project_roots" in values:
+        project_paths = tuple(
+            RootDescriptor(path, kind="project", provenance="config")
+            for path in _configured_paths(base_path, values["project_roots"])
+        )
+    else:
         project_paths = (os.path.abspath(base_path),)
 
     def roots(key: str, kind: str) -> tuple[RootDescriptor, ...]:

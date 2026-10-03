@@ -1,7 +1,9 @@
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from deputy.core import analysis_scope_from_config, create_context
 from deputy.database.sqlite import SqliteSymbolCache
+from deputy.utils.storage import get_source_files
 
 
 def test_create_context_sets_skip_paths():
@@ -74,3 +76,30 @@ def test_analysis_scope_from_config_resolves_root_paths(tmp_path):
     assert scope.dependency_roots[0].path == str(tmp_path / "dependencies")
     assert scope.selected_languages == {"python"}
     assert scope.selected_file_extensions == {".py", ".pyi"}
+
+
+def test_analysis_scope_from_config_trims_paths_and_marks_project_provenance(
+    tmp_path,
+):
+    scope = analysis_scope_from_config(
+        str(tmp_path),
+        {
+            "project_roots": "project",
+            "source_roots": "src: generated",
+        },
+    )
+
+    assert scope.project_roots[0].provenance == "config"
+    assert {root.path for root in scope.source_roots} == {
+        str(tmp_path / "src"),
+        str(tmp_path / "generated"),
+    }
+
+
+def test_explicit_analysis_language_excludes_other_extensions(tmp_path):
+    (tmp_path / "module.py").write_text("")
+    (tmp_path / "Module.java").write_text("")
+    scope = analysis_scope_from_config(str(tmp_path), {"analysis_languages": "python"})
+    context = create_context(str(tmp_path), MagicMock(), scope=scope)
+
+    assert [Path(file.path).name for file in get_source_files(context)] == ["module.py"]

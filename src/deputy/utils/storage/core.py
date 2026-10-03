@@ -36,6 +36,7 @@ def get_source_files(context: Context) -> list[FileMetadata]:
         if (
             discovered.root_kind == "project"
             and discovered.root.path == os.path.abspath(context.base_path)
+            and not discovered.root._root_id_explicit
         ):
             root_id = "project"
         results.append(

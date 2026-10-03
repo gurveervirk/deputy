@@ -179,6 +179,12 @@ def _process_files(
         by_lang.setdefault(lang, []).append(fmeta)
 
     for lang, lang_files in by_lang.items():
+        if (
+            ctx.analysis_scope.language_selection_explicit
+            and lang not in ctx.selected_languages
+        ):
+            logger.debug("skipping unselected language: %s", lang)
+            continue
         parser = ctx.get_parser(lang)
         linker = ctx.get_linker(lang)
         if parser is None or linker is None:
@@ -190,28 +196,60 @@ def _process_files(
             continue
 
         lang_ctx = Context(copy_from=ctx)
+        lang_ctx.base_path = base_path
+        lang_ctx.source_root_id = None
         lang_ctx.entity_registry = EntityRegistry()
+        root_metadata_by_id: dict[str, dict[str, str]] = {}
 
-        source_files = []
-        source_roots: dict[str, dict[str, str]] = {}
+        files_by_root: dict[tuple[str, str, str], list] = {}
         for fmeta in lang_files:
             root_path = os.path.abspath(fmeta.root_path or base_path)
-            abs_path = fmeta.absolute_path or os.path.join(root_path, fmeta.path)
-            lang_ctx.base_path = root_path
-            logger.debug("parsing: %s", fmeta.path)
-            sf = parser.parse_file(abs_path, lang_ctx)
-            source_files.append(sf)
-            source_roots[sf.id] = {
-                "root_id": fmeta.root_id,
-                "root_kind": fmeta.root_kind,
+            root_key = (fmeta.root_id, fmeta.root_kind, root_path)
+            files_by_root.setdefault(root_key, []).append(fmeta)
+
+        for (root_id, root_kind, root_path), root_files in sorted(
+            files_by_root.items()
+        ):
+            semantic_root_id = root_id
+            if (
+                root_id == "project"
+                and root_kind == "project"
+                and root_path == os.path.abspath(base_path)
+            ):
+                semantic_root_id = None
+            root_ctx = Context(
+                copy_from=ctx,
+                source_root_id=semantic_root_id,
+            )
+            root_ctx.base_path = root_path
+            root_ctx.entity_registry = EntityRegistry()
+            source_files = []
+            root_metadata = {
+                "root_id": root_id,
+                "root_kind": root_kind,
                 "root_path": root_path,
             }
-            relpath_to_fqn[fmeta.logical_path] = getattr(sf, "fqn", None) or getattr(
-                sf, "module_name", None
-            )
+            for fmeta in root_files:
+                abs_path = fmeta.absolute_path or os.path.join(root_path, fmeta.path)
+                logger.debug("parsing: %s", fmeta.logical_path)
+                sf = parser.parse_file(abs_path, root_ctx)
+                source_files.append(sf)
+                root_metadata_by_id[sf.id] = root_metadata
+                relpath_to_fqn[fmeta.logical_path] = getattr(
+                    sf, "fqn", None
+                ) or getattr(sf, "module_name", None)
 
-        logger.debug("linking %d %s source files", len(source_files), lang)
-        linker.link_files(source_files, lang_ctx)
+            logger.debug(
+                "linking %d %s source files for root %s",
+                len(source_files),
+                lang,
+                root_id,
+            )
+            linker.link_files(source_files, root_ctx)
+            for entity in root_ctx.entity_registry.values():
+                lang_ctx.entity_registry.add(entity)
+                root_metadata_by_id.setdefault(entity.id, root_metadata)
+
         if context_sink is not None:
             context_sink(lang, lang_ctx)
 
@@ -219,16 +257,12 @@ def _process_files(
         if lang == "python":
             module_exports = build_module_exports(lang_ctx.entity_registry)
 
-        lang_ctx.base_path = base_path
         for entity in list(lang_ctx.entity_registry.values()):
             kwargs = dict(kwargs_base)
             file_path = getattr(entity, "path", None)
             if file_path and file_path.endswith(".pyi"):
                 kwargs["is_stub"] = True
-            root_metadata = source_roots.get(
-                getattr(getattr(entity, "source_range", None), "source_id", None)
-                or entity.id
-            )
+            root_metadata = root_metadata_by_id.get(entity.id)
             if root_metadata == {
                 "root_id": "project",
                 "root_kind": "project",
