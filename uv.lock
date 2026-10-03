@@ -154,12 +154,12 @@ wheels = [
 
 [[package]]
 name = "deproc-core"
-version = "0.2.0"
+version = "0.3.1"
 source = { editable = "../deproc/deproc-core" }
 
 [[package]]
 name = "deproc-java"
-version = "0.2.1"
+version = "0.2.2"
 source = { editable = "../deproc/deproc-java" }
 dependencies = [
     { name = "deproc-core" },
@@ -178,7 +178,7 @@ requires-dist = [
 
 [[package]]
 name = "deproc-python"
-version = "0.2.1"
+version = "0.2.2"
 source = { editable = "../deproc/deproc-python" }
 dependencies = [
     { name = "deproc-core" },
@@ -213,7 +213,7 @@ requires-dist = [{ name = "tree-sitter", specifier = ">=0.25.2" }]
 
 [[package]]
 name = "deputy-cli"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "deproc-core" },
