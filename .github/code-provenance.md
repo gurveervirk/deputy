@@ -1,6 +1,6 @@
 # Code provenance checks
 
-The `Code Provenance` workflow runs for pull requests targeting `main`. For pull requests from the base repository it uses SCANOSS in delta mode, so the scan focuses on files changed by the pull request. File and snippet matching are enabled; dependency analysis remains disabled because dependency and license policy is handled separately.
+The `Code Provenance` workflow runs automatically for pull requests targeting `main`. For same-repository pull requests it uses SCANOSS in delta mode, so the scan focuses on files changed by the pull request. A maintainer can also start it with `workflow_dispatch`; manual runs use a full scan for investigation because no pull-request delta is available. File and snippet matching are enabled; dependency analysis remains disabled because dependency and license policy is handled separately.
 
 Fork pull requests take a visible safe-skip path. The scanner does not check out or execute fork code because the pull-request token is restricted. The safe-skip job emits a notice; maintainers should review the change from a trusted branch before relying on a provenance result. For same-repository pull requests, the workflow executes the reviewed `.github/scanoss-docker-wrapper.sh` to invoke the pinned scanner; it does not execute application or test code.
 
@@ -8,7 +8,7 @@ A match means that SCANOSS found a likely match in its indexed open-source knowl
 
 ## Reviewing a match
 
-Review the component, license, source repository, matched file, and snippet lines reported by the workflow. Confirm whether the match is expected and whether the source and license obligations are understood.
+Review the component, license, source repository, matched file, and snippet lines reported by the workflow. Confirm whether the match is expected and whether the source and license obligations are understood. The pinned action attempts a main pull-request summary and per-match commit comments, but it exposes no input to disable only commit comments; the current least-privilege token can reject those optional commit-comment calls with HTTP 403. Treat check annotations, the main PR summary, and retained machine-readable artifacts as authoritative when that subfeature is unavailable.
 
 Expected matches are declared in the version-controlled `scanoss.json` file under `bom.include`. Prefer a narrow entry containing the changed path, the component PURL, and a short review note:
 
@@ -30,7 +30,7 @@ The policy will become merge-blocking only after representative pull requests es
 
 ## Data handling and workflow safety
 
-SCANOSS generates file and snippet fingerprints on the GitHub Actions runner and sends fingerprints and scan metadata to the configured SCANOSS service. The workflow does not intentionally upload repository source text to that service. The action also writes scan results to GitHub Actions artifacts and publishes summaries, checks, annotations, and pull-request comments through the GitHub token.
+SCANOSS generates file and snippet fingerprints on the GitHub Actions runner and sends fingerprints and scan metadata to the configured SCANOSS service. The workflow does not intentionally upload repository source text to that service. The action also writes scan results to GitHub Actions artifacts and attempts to publish summaries, checks, annotations, and pull-request comments through the GitHub token. Per-match commit comments are optional reviewer UX and may be unavailable under the current least-privilege token; their HTTP 403 errors do not change the scan result or policy mode.
 
 The runtime image is pinned to `ghcr.io/scanoss/scanoss-py@sha256:33a63229a4e36771dc90d1e7efc79f57e4e57d3a4b5c20cf52ea2c70f964481c`, which is the immutable multi-platform manifest resolved from `ghcr.io/scanoss/scanoss-py:v1.54.2`. The manifest has Linux amd64 and arm64 images.
 
@@ -53,7 +53,7 @@ The candidates below were compared against this workflow's source/file/snippet p
 
 Peer-only similarity tools, dependency-only SCA, license-only scanners, and general code-quality tools are not equivalent source-provenance replacements. Any future alternative must be tested with clean, known-match, approved-match, unrelated-match, service-failure, fork, private-repository, outbound-data, and artifact-retention cases before adoption.
 
-The workflow uses `pull_request` and does not use secrets. Fork pull requests are not checked out or executed. Same-repository scans execute the reviewed `.github/scanoss-docker-wrapper.sh` but do not execute application or test code; they use only `checks: write`, `contents: read`, and `pull-requests: write`. The fork safe-skip path requests no permissions. The workflow does not use `pull_request_target`. Private repositories follow the same fingerprint and metadata data-flow; repository access is limited by the workflow permissions.
+The workflow uses `pull_request` and `workflow_dispatch` and does not use secrets. Fork pull requests are not checked out or executed. Same-repository scans execute the reviewed `.github/scanoss-docker-wrapper.sh` but do not execute application or test code; they use only `checks: write`, `contents: read`, and `pull-requests: write`. The fork safe-skip path requests no permissions. The workflow does not use `pull_request_target`. Private repositories follow the same fingerprint and metadata data-flow; repository access is limited by the workflow permissions.
 
 Generated outputs, caches, environments, package locks, and build artifacts are excluded in `scanoss.json`. Authored source, tests, documentation, scripts, and workflow/action files remain eligible for scanning unless a later reviewed exclusion is added.
 

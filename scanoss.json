@@ -26,6 +26,11 @@
           "node_modules/",
           "target/",
           "scanoss.json",
+          "LICENSE",
+          ".github/deproc-ref",
+          ".github/swh-provenance-allowlist.json",
+          "src/deputy/_version.py",
+          ".python-version",
           "uv.lock",
           "**/*.pyc",
           "**/*.pyo",
@@ -56,6 +61,11 @@
           "node_modules/",
           "target/",
           "scanoss.json",
+          "LICENSE",
+          ".github/deproc-ref",
+          ".github/swh-provenance-allowlist.json",
+          "src/deputy/_version.py",
+          ".python-version",
           "uv.lock",
           "**/*.pyc",
           "**/*.pyo",
@@ -70,6 +80,12 @@
     }
   },
   "bom": {
-    "include": []
+    "include": [],
+    "remove": [
+      {
+        "purl": "pkg:pypi/deputy-cli",
+        "comment": "Ignore self-matches against prior Deputy releases"
+      }
+    ]
   }
 }
