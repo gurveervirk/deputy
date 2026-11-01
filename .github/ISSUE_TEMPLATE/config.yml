@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: deproc issues
+    url: https://github.com/gurveervirk/deproc/issues/new/choose
+    about: Problems in source parsing, linking, or resolution may belong in the deproc repository.
