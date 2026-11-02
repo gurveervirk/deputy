@@ -9,13 +9,14 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+  workflow_dispatch:
 
 permissions: {}
 
 jobs:
   code-provenance:
     name: Code Provenance
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       checks: write
       contents: read
@@ -38,7 +39,7 @@ jobs:
         with:
           github.token: ${{ github.token }}
           runtimeContainer: ghcr.io/scanoss/scanoss-py@sha256:33a63229a4e36771dc90d1e7efc79f57e4e57d3a4b5c20cf52ea2c70f964481c
-          scanMode: delta
+          scanMode: ${{ github.event_name == 'workflow_dispatch' && 'full' || 'delta' }}
           scanPath: .
           scanFiles: true
           skipSnippets: false
@@ -52,7 +53,7 @@ jobs:
 
   code-provenance-fork:
     name: Code Provenance (fork safe skip)
-    if: github.event.pull_request.head.repo.full_name != github.repository
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
     permissions: {}
     runs-on: ubuntu-latest
     steps:

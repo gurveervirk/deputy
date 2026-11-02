@@ -6,13 +6,11 @@ if [[ -z "${SCANOSS_REAL_DOCKER:-}" || -z "${SCANOSS_RUNTIME_IMAGE:-}" ]]; then
   exit 2
 fi
 
-filter_delta() {
-  local host_root=$1
-  local delta_dir=$2
-  local settings_path="$host_root/scanoss.json"
-  local delta_path="$host_root/$delta_dir"
+filter_scan_path() {
+  local settings_path=$1
+  local scan_path=$2
 
-  if [[ ! -f "$settings_path" || ! -d "$delta_path" ]]; then
+  if [[ ! -f "$settings_path" || ! -d "$scan_path" ]]; then
     return 0
   fi
 
@@ -32,11 +30,11 @@ PY
   while IFS= read -r -d '' ignored; do
     relative=${ignored#./}
     if [[ -n "$relative" && "$relative" != "$ignored" ]]; then
-      rm -f -- "$delta_path/$relative"
+      rm -f -- "$scan_path/$relative"
     fi
   done < <(
     (
-      cd "$delta_path"
+      cd "$scan_path"
       find . -type f ! -name .gitignore -print0
     ) | (
       cd "$filter_root"
@@ -45,6 +43,12 @@ PY
   )
 
   rm -rf "$filter_root"
+}
+
+filter_delta() {
+  local host_root=$1
+  local delta_dir=$2
+  filter_scan_path "$host_root/scanoss.json" "$host_root/$delta_dir"
 }
 
 args=("$@")
@@ -109,8 +113,45 @@ if (( delta_copy_index >= 0 )); then
   exit 0
 fi
 
+scan_tree=''
+cleanup_scan_tree() {
+  if [[ -n "$scan_tree" && -d "$scan_tree" ]]; then
+    rm -rf -- "$scan_tree"
+  fi
+}
+
 if (( scan_index >= 0 )); then
+  host_root=''
+  for ((index = 0; index + 1 < ${#args[@]}; index++)); do
+    if [[ "${args[index]}" == '-v' && "${args[index + 1]}" == *:/scanoss ]]; then
+      host_root=${args[index + 1]%:/scanoss}
+      break
+    fi
+  done
+
+  scan_path_index=$((scan_index + 1))
+  if [[ -n "$host_root" && -f "$host_root/scanoss.json" && "${args[scan_path_index]:-}" == '.' ]]; then
+    scan_relative=".scanoss-source-$$"
+    scan_tree="$host_root/$scan_relative"
+    rm -rf -- "$scan_tree"
+    mkdir -p "$scan_tree"
+    if ! git -C "$host_root" archive --format=tar HEAD | tar -x -C "$scan_tree"; then
+      cleanup_scan_tree
+      exit 2
+    fi
+    filter_scan_path "$host_root/scanoss.json" "$scan_tree"
+    args[scan_path_index]="$scan_relative"
+    trap cleanup_scan_tree EXIT
+  fi
   args+=(--retry 0 --all-hidden --all-extensions --all-folders)
+
+  if [[ -n "$scan_tree" ]]; then
+    set +e
+    "$SCANOSS_REAL_DOCKER" "${args[@]}"
+    status=$?
+    set -e
+    exit "$status"
+  fi
 fi
 
 exec "$SCANOSS_REAL_DOCKER" "${args[@]}"
