@@ -483,3 +483,99 @@ def test_shared_java_package_is_root_order_independent_and_rehydrates(tmp_path):
     (package_id,) = restored.entity_registry.get_ids_by_fqn("com.acme")
     package = restored.entity_registry.get(package_id)
     assert len(package.compilation_unit_ids) == 2
+
+
+def _regular_and_namespace_roots(tmp_path):
+    project = tmp_path / "project"
+    generated = tmp_path / "generated"
+    (project / "ns").mkdir(parents=True)
+    (generated / "ns").mkdir(parents=True)
+    (project / "ns" / "__init__.py").write_text("")
+    (project / "ns" / "a.py").write_text("class A: pass\n")
+    (generated / "ns" / "b.py").write_text("class B: pass\n")
+    return project, generated
+
+
+def test_regular_package_wins_over_namespace_portion_in_another_root(tmp_path):
+    project, generated = _regular_and_namespace_roots(tmp_path)
+    context = create_context(
+        str(project), None, scope=_scope_for(project, generated, "python", ".py")
+    )
+
+    records, _ = _process_files(context, get_source_files(context), str(project))
+
+    packages = [r for r in records if r["full_path"] == "ns"]
+    assert [r["type"] for r in packages] == ["PACKAGE"]
+    modules = {r["full_path"]: r for r in records if r["type"] == "PYTHON_MODULE"}
+    assert set(modules) == {"ns.a", "ns.b"}
+    assert modules["ns.a"]["parent_id"] == packages[0]["id"]
+    assert modules["ns.b"]["parent_id"] is None
+
+
+def test_regular_package_precedence_is_root_order_independent(tmp_path):
+    project, generated = _regular_and_namespace_roots(tmp_path)
+    roots = [
+        RootDescriptor(str(project), kind="project", root_id="project-root"),
+        RootDescriptor(str(generated), kind="generated", root_id="generated-root"),
+    ]
+
+    def snapshot(ordered_roots):
+        scope = AnalysisScope(
+            roots=ordered_roots,
+            selected_languages=["python"],
+            selected_file_extensions=[".py"],
+        )
+        context = create_context(str(project), None, scope=scope)
+        records, _ = _process_files(context, get_source_files(context), str(project))
+        return sorted(
+            (r["id"], r["type"], r["full_path"], r["parent_id"]) for r in records
+        )
+
+    assert snapshot(roots) == snapshot(list(reversed(roots)))
+
+
+def test_regular_package_precedence_survives_rehydration(tmp_path):
+    project, generated = _regular_and_namespace_roots(tmp_path)
+    context = create_context(
+        str(project), None, scope=_scope_for(project, generated, "python", ".py")
+    )
+    records, _ = _process_files(context, get_source_files(context), str(project))
+
+    restored = build_context_from_records(records)
+
+    (package_id,) = restored.entity_registry.get_ids_by_fqn("ns")
+    (shadowed_id,) = restored.entity_registry.get_ids_by_fqn("ns.b")
+    assert restored.entity_registry.get(shadowed_id).parent_id is None
+    (kept_id,) = restored.entity_registry.get_ids_by_fqn("ns.a")
+    assert restored.entity_registry.get(kept_id).parent_id == package_id
+
+
+def test_java_package_shared_by_two_named_modules_stays_separate(tmp_path):
+    project = tmp_path / "project"
+    for module, cls in (("m.one", "A"), ("m.two", "B")):
+        (project / module / "com" / "acme").mkdir(parents=True)
+        (project / module / "module-info.java").write_text(
+            f"module {module} {{ exports com.acme; }}\n"
+        )
+        (project / module / "com" / "acme" / f"{cls}.java").write_text(
+            f"package com.acme;\npublic class {cls} {{}}\n"
+        )
+    context = create_context(str(project), None)
+
+    records, _ = _process_files(context, get_source_files(context), str(project))
+
+    packages = [r for r in records if r["full_path"] == "com.acme"]
+    assert len(packages) == 2
+    assert len({r["id"] for r in packages}) == 2
+    modules = {r["full_path"]: r for r in records if r["type"] == "JAVA_MODULE"}
+    by_id = {r["id"]: r for r in records}
+    for module_name, class_name in (("m.one", "A"), ("m.two", "B")):
+        package_ids = json.loads(modules[module_name]["metadata_json"])["package_ids"]
+        assert len(package_ids) == 1
+        package = by_id[package_ids[0]]
+        assert json.loads(package["metadata_json"])["module_name"] == module_name
+        classes = {
+            by_id[unit_id]["name"]
+            for unit_id in json.loads(package["metadata_json"])["compilation_unit_ids"]
+        }
+        assert classes == {class_name}

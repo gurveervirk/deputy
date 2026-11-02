@@ -9,6 +9,7 @@ from deproc.core.interfaces.parser.models import SemanticContainer
 from deproc.core.runtime import EntityRegistry
 from deproc.plugins.python.utils.exports import build_module_exports
 from deproc.plugins.python.utils.imports import resolve_relative_import_path
+from deproc.plugins.python.utils.packages import apply_regular_package_precedence
 from rich.tree import Tree
 
 from deputy.core import analysis_scope_from_config, create_context
@@ -202,6 +203,7 @@ def _process_files(
         lang_ctx.entity_registry = EntityRegistry()
         root_metadata_by_id: dict[str, dict[str, str]] = {}
         container_roots: dict[str, list[dict[str, str]]] = {}
+        linked_roots: list[tuple[EntityRegistry, dict[str, str]]] = []
 
         files_by_root: dict[tuple[str, str, str], list] = {}
         for fmeta in lang_files:
@@ -248,12 +250,17 @@ def _process_files(
                 root_id,
             )
             linker.link_files(source_files, root_ctx)
-            for entity in root_ctx.entity_registry.values():
+            linked_roots.append((root_ctx.entity_registry, root_metadata))
+
+        if lang == "python":
+            apply_regular_package_precedence([registry for registry, _ in linked_roots])
+        for registry, root_metadata in linked_roots:
+            for entity in registry.values():
                 if isinstance(entity, SemanticContainer):
                     container_roots.setdefault(entity.id, []).append(root_metadata)
                 else:
                     root_metadata_by_id.setdefault(entity.id, root_metadata)
-            lang_ctx.entity_registry.merge_from(root_ctx.entity_registry)
+            lang_ctx.entity_registry.merge_from(registry)
 
         shared_container_roots: dict[str, list[dict[str, str]]] = {}
         for container_id, contributing in container_roots.items():
