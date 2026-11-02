@@ -9,7 +9,7 @@ from deproc.utils.python_env import (
 from rich.console import Console
 
 from deputy._version import __version__
-from deputy.core import create_context
+from deputy.core import analysis_scope_from_config, create_context
 from deputy.database.sqlite import (
     clean_orphan_entities,
     clean_stale_inheritance_rows,
@@ -86,7 +86,8 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     enable_cache = cfg.get("enable_cache", "false") == "true"
     if enable_cache:
         console.print("[dim]cache: enabled[/dim]")
-    ctx = create_context(base_path, conn, enable_cache=enable_cache)
+    scope = analysis_scope_from_config(base_path, cfg)
+    ctx = create_context(base_path, conn, enable_cache=enable_cache, scope=scope)
     files = get_source_files(ctx)
     tracked = get_branch_files(conn, branch)
 
@@ -119,8 +120,8 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
 
     if not changed:
         for fmeta in files:
-            if fmeta.path in mtime_only:
-                update_mtime(conn, branch, fmeta.path, fmeta.mtime)
+            if fmeta.logical_path in mtime_only:
+                update_mtime(conn, branch, fmeta.logical_path, fmeta.mtime)
         conn.commit()
         conn.close()
         logger.info("sync complete — mtime-only update for %d files", len(mtime_only))
@@ -162,9 +163,13 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
         delete_branch_file(conn, branch, d)
 
     for fmeta in files:
-        if fmeta.path in file_hashes:
+        if fmeta.logical_path in file_hashes:
             upsert_branch_file(
-                conn, branch, fmeta.path, file_hashes[fmeta.path], fmeta.mtime
+                conn,
+                branch,
+                fmeta.logical_path,
+                file_hashes[fmeta.logical_path],
+                fmeta.mtime,
             )
 
     conn.commit()
@@ -328,16 +333,20 @@ def _get_source_file_path(entity: dict, conn, base_path: str) -> str | None:
         "COMPILATION_UNIT",
     ):
         path = meta.get("path", "")
+        source_root = meta.get("root_path", base_path)
     else:
         sid = meta.get("source_id")
         if sid:
             src = get_entity_by_id(conn, sid)
-            path = json.loads(src["metadata_json"]).get("path", "") if src else ""
+            src_meta = json.loads(src["metadata_json"]) if src else {}
+            path = src_meta.get("path", "")
+            source_root = src_meta.get("root_path", base_path)
         else:
             path = ""
+            source_root = base_path
     if not path:
         return None
-    full = os.path.join(base_path, path) if not os.path.isabs(path) else path
+    full = os.path.join(source_root, path) if not os.path.isabs(path) else path
     return full if os.path.isfile(full) else None
 
 
