@@ -1,6 +1,7 @@
 import os
 from deproc.core.context import Context
 from deproc.core.runtime import EntityRegistry
+from deproc.core.scope import AnalysisScope, RootDescriptor
 from deputy.database.sqlite import (
     delete_entities_by_package as db_delete_entities_by_package,
     upsert_entity,
@@ -33,6 +34,15 @@ def process_dependency(
 
         ctx = Context(copy_from=template_ctx)
         ctx.base_path = install_path
+        ctx.set_scope(
+            AnalysisScope(
+                roots=[RootDescriptor(install_path)],
+                selected_languages=set(template_ctx.selected_languages),
+                selected_file_extensions=set(template_ctx.selected_file_extensions),
+                exclusions=template_ctx.analysis_scope.exclusions,
+            )
+        )
+        ctx.set_skip_paths(template_ctx.skip_paths)
         ctx.entity_registry = EntityRegistry()
 
         files = get_source_files(ctx)
