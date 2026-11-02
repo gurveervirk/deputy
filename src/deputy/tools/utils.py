@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from deproc.core.context import Context
+from deproc.core.interfaces.parser.models import SemanticContainer
 from deproc.core.runtime import EntityRegistry
 from deproc.plugins.python.utils.exports import build_module_exports
 from deproc.plugins.python.utils.imports import resolve_relative_import_path
@@ -200,6 +201,7 @@ def _process_files(
         lang_ctx.source_root_id = None
         lang_ctx.entity_registry = EntityRegistry()
         root_metadata_by_id: dict[str, dict[str, str]] = {}
+        container_roots: dict[str, list[dict[str, str]]] = {}
 
         files_by_root: dict[tuple[str, str, str], list] = {}
         for fmeta in lang_files:
@@ -247,8 +249,21 @@ def _process_files(
             )
             linker.link_files(source_files, root_ctx)
             for entity in root_ctx.entity_registry.values():
-                lang_ctx.entity_registry.add(entity)
-                root_metadata_by_id.setdefault(entity.id, root_metadata)
+                if isinstance(entity, SemanticContainer):
+                    container_roots.setdefault(entity.id, []).append(root_metadata)
+                else:
+                    root_metadata_by_id.setdefault(entity.id, root_metadata)
+            lang_ctx.entity_registry.merge_from(root_ctx.entity_registry)
+
+        shared_container_roots: dict[str, list[dict[str, str]]] = {}
+        for container_id, contributing in container_roots.items():
+            if len(contributing) == 1:
+                root_metadata_by_id[container_id] = contributing[0]
+            else:
+                shared_container_roots[container_id] = sorted(
+                    contributing,
+                    key=lambda r: (r["root_id"], r["root_kind"], r["root_path"]),
+                )
 
         if context_sink is not None:
             context_sink(lang, lang_ctx)
@@ -263,7 +278,9 @@ def _process_files(
             if file_path and file_path.endswith(".pyi"):
                 kwargs["is_stub"] = True
             root_metadata = root_metadata_by_id.get(entity.id)
-            if root_metadata == {
+            if entity.id in shared_container_roots:
+                root_metadata = {"roots": shared_container_roots[entity.id]}
+            elif root_metadata == {
                 "root_id": "project",
                 "root_kind": "project",
                 "root_path": os.path.abspath(base_path),

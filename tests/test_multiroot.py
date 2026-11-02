@@ -275,3 +275,211 @@ def test_cross_root_python_resolution_uses_shared_registry(tmp_path):
         for entity in linked["python"].entity_registry.values()
         if entity.id in result.resolved_ids
     } == {"models.Model"}
+
+
+def _scope_for(project, generated, language, extension):
+    return AnalysisScope(
+        roots=[
+            RootDescriptor(str(project), kind="project", root_id="project-root"),
+            RootDescriptor(str(generated), kind="generated", root_id="generated-root"),
+        ],
+        selected_languages=[language],
+        selected_file_extensions=[extension],
+    )
+
+
+def test_shared_python_namespace_package_aggregates_across_roots(tmp_path):
+    project = tmp_path / "project"
+    generated = tmp_path / "generated"
+    (project / "ns").mkdir(parents=True)
+    (generated / "ns").mkdir(parents=True)
+    (project / "ns" / "a.py").write_text("class A: pass\n")
+    (generated / "ns" / "b.py").write_text("class B: pass\n")
+
+    context = create_context(
+        str(project), None, scope=_scope_for(project, generated, "python", ".py")
+    )
+    records, _ = _process_files(context, get_source_files(context), str(project))
+
+    namespaces = [
+        r for r in records if r["full_path"] == "ns" and r["parent_id"] is None
+    ]
+    assert len(namespaces) == 1
+    modules = {r["full_path"]: r for r in records if r["type"] == "PYTHON_MODULE"}
+    assert set(modules) == {"ns.a", "ns.b"}
+    assert {m["parent_id"] for m in modules.values()} == {namespaces[0]["id"]}
+    namespace_meta = json.loads(namespaces[0]["metadata_json"])
+    assert "root_id" not in namespace_meta
+    assert "root_path" not in namespace_meta
+    assert [
+        (root["root_id"], root["root_kind"], root["root_path"])
+        for root in namespace_meta["roots"]
+    ] == [
+        ("generated-root", "generated", os.path.abspath(str(generated))),
+        ("project-root", "project", os.path.abspath(str(project))),
+    ]
+    assert json.loads(modules["ns.a"]["metadata_json"])["root_id"] == "project-root"
+    assert json.loads(modules["ns.b"]["metadata_json"])["root_id"] == "generated-root"
+
+
+def test_shared_java_package_aggregates_across_roots(tmp_path):
+    project = tmp_path / "project"
+    generated = tmp_path / "generated"
+    (project / "com" / "acme").mkdir(parents=True)
+    (generated / "com" / "acme").mkdir(parents=True)
+    (project / "com" / "acme" / "A.java").write_text(
+        "package com.acme;\npublic class A {}\n"
+    )
+    (generated / "com" / "acme" / "B.java").write_text(
+        "package com.acme;\npublic class B {}\n"
+    )
+
+    context = create_context(
+        str(project), None, scope=_scope_for(project, generated, "java", ".java")
+    )
+    records, _ = _process_files(context, get_source_files(context), str(project))
+
+    packages = [r for r in records if r["full_path"] == "com.acme"]
+    assert len(packages) == 1
+    names = {r["name"] for r in records if r["type"] == "CLASS"}
+    assert names == {"A", "B"}
+    package_meta = json.loads(packages[0]["metadata_json"])
+    assert "root_id" not in package_meta
+    assert [root["root_id"] for root in package_meta["roots"]] == [
+        "generated-root",
+        "project-root",
+    ]
+
+
+def test_shared_namespace_package_is_root_order_independent(tmp_path):
+    project = tmp_path / "project"
+    generated = tmp_path / "generated"
+    (project / "ns").mkdir(parents=True)
+    (generated / "ns").mkdir(parents=True)
+    (project / "ns" / "a.py").write_text("class A: pass\n")
+    (generated / "ns" / "b.py").write_text("class B: pass\n")
+    roots = [
+        RootDescriptor(str(project), kind="project", root_id="project-root"),
+        RootDescriptor(str(generated), kind="generated", root_id="generated-root"),
+    ]
+
+    def snapshot(ordered_roots):
+        scope = AnalysisScope(
+            roots=ordered_roots,
+            selected_languages=["python"],
+            selected_file_extensions=[".py"],
+        )
+        context = create_context(str(project), None, scope=scope)
+        records, _ = _process_files(context, get_source_files(context), str(project))
+        return sorted(
+            (r["id"], r["full_path"], r["parent_id"], r["metadata_json"])
+            for r in records
+        )
+
+    assert snapshot(roots) == snapshot(list(reversed(roots)))
+
+
+def test_shared_namespace_package_survives_rehydration(tmp_path):
+    project = tmp_path / "project"
+    generated = tmp_path / "generated"
+    (project / "ns").mkdir(parents=True)
+    (generated / "ns").mkdir(parents=True)
+    (project / "ns" / "a.py").write_text("class A: pass\n")
+    (generated / "ns" / "b.py").write_text("class B: pass\n")
+    context = create_context(
+        str(project), None, scope=_scope_for(project, generated, "python", ".py")
+    )
+    records, _ = _process_files(context, get_source_files(context), str(project))
+
+    restored = build_context_from_records(records)
+
+    namespace_ids = restored.entity_registry.get_ids_by_fqn("ns")
+    assert len(namespace_ids) == 1
+    for fqn in ("ns.a", "ns.b"):
+        (module_id,) = restored.entity_registry.get_ids_by_fqn(fqn)
+        module = restored.entity_registry.get(module_id)
+        assert module.parent_id in namespace_ids
+
+
+def test_shared_namespace_package_across_three_roots(tmp_path):
+    roots = []
+    for index, name in enumerate(("one", "two", "three")):
+        root = tmp_path / name
+        (root / "ns").mkdir(parents=True)
+        (root / "ns" / f"m{index}.py").write_text(f"class C{index}: pass\n")
+        roots.append(RootDescriptor(str(root), kind="project", root_id=f"{name}-root"))
+    scope = AnalysisScope(
+        roots=roots,
+        selected_languages=["python"],
+        selected_file_extensions=[".py"],
+    )
+    context = create_context(str(tmp_path / "one"), None, scope=scope)
+
+    records, _ = _process_files(
+        context, get_source_files(context), str(tmp_path / "one")
+    )
+
+    namespaces = [r for r in records if r["full_path"] == "ns"]
+    assert len(namespaces) == 1
+    modules = [r for r in records if r["type"] == "PYTHON_MODULE"]
+    assert {m["parent_id"] for m in modules} == {namespaces[0]["id"]}
+    assert len(modules) == 3
+
+
+def test_container_from_one_root_keeps_scalar_root_metadata(tmp_path):
+    project = tmp_path / "project"
+    generated = tmp_path / "generated"
+    (project / "only_here").mkdir(parents=True)
+    generated.mkdir()
+    (project / "only_here" / "a.py").write_text("class A: pass\n")
+    (generated / "other.py").write_text("class B: pass\n")
+    context = create_context(
+        str(project), None, scope=_scope_for(project, generated, "python", ".py")
+    )
+
+    records, _ = _process_files(context, get_source_files(context), str(project))
+
+    (container,) = [r for r in records if r["full_path"] == "only_here"]
+    meta = json.loads(container["metadata_json"])
+    assert meta["root_id"] == "project-root"
+    assert "roots" not in meta
+
+
+def test_shared_java_package_is_root_order_independent_and_rehydrates(tmp_path):
+    project = tmp_path / "project"
+    generated = tmp_path / "generated"
+    for root, name in ((project, "A"), (generated, "B")):
+        (root / "com" / "acme").mkdir(parents=True)
+        (root / "com" / "acme" / f"{name}.java").write_text(
+            f"package com.acme;\npublic class {name} {{}}\n"
+        )
+    roots = [
+        RootDescriptor(str(project), kind="project", root_id="project-root"),
+        RootDescriptor(str(generated), kind="generated", root_id="generated-root"),
+    ]
+
+    def run(ordered_roots):
+        scope = AnalysisScope(
+            roots=ordered_roots,
+            selected_languages=["java"],
+            selected_file_extensions=[".java"],
+        )
+        context = create_context(str(project), None, scope=scope)
+        records, _ = _process_files(context, get_source_files(context), str(project))
+        return records
+
+    first = run(roots)
+    second = run(list(reversed(roots)))
+
+    def snapshot(records):
+        return sorted(
+            (r["id"], r["full_path"], r["parent_id"], r["metadata_json"])
+            for r in records
+        )
+
+    assert snapshot(first) == snapshot(second)
+
+    restored = build_context_from_records(first)
+    (package_id,) = restored.entity_registry.get_ids_by_fqn("com.acme")
+    package = restored.entity_registry.get(package_id)
+    assert len(package.compilation_unit_ids) == 2
