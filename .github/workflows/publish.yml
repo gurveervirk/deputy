@@ -78,6 +78,7 @@ jobs:
       - name: Run tests against installed wheel
         run: |
           cp -R tests "$RUNNER_TEMP/deputy-tests"
+          cp -R .github "$RUNNER_TEMP/.github"
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/deputy-clean/bin/python" -m pytest "$RUNNER_TEMP/deputy-tests" -q
 
