@@ -49,8 +49,11 @@ Stores base class relationships for inheritance tracking.
 | `base_entity_id` | TEXT | Entity ID if resolved, NULL otherwise |
 | `is_resolved` | INTEGER | 1 = resolved to a concrete entity, 0 = unresolved |
 | `branch_info` | TEXT | JSON with branch-specific candidate info |
+| `relation_kind` | TEXT | `inherits` for Python bases. For Java: `extends`, `implements` or `interface_extends` |
 
 **Primary key:** `(class_entity_id, base_full_path)`.
+
+Databases created before `relation_kind` existed gain the column automatically the first time they are opened.
 
 ## `inheritance_pins`
 
@@ -74,7 +77,7 @@ Tracks per-branch file state for incremental sync.
 | Column | Type | Description |
 |--------|------|-------------|
 | `branch_name` | TEXT | Git branch name |
-| `filepath` | TEXT | Relative file path |
+| `filepath` | TEXT | Relative path for files under the default project directory, otherwise `kind:root_id::relative/path` |
 | `content_hash` | TEXT | SHA-256 hash of file content |
 | `last_modified` | REAL | File mtime |
 

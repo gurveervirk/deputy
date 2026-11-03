@@ -51,6 +51,10 @@ SQLite database (.deputy.db)
 
 `search --language java` and the `info`/`search` Java columns (`annotations`, `superclass`, `implements`, `is_abstract`, `is_final`, `is_static`) surface Java entities. Java `IMPORT` entities are excluded from search results (mirroring Python's excluded `IMPORT_STATEMENT`). The inheritance pipeline (class_bases/MRO/inherited members) is Python-only for now — Java classes serialize `superclass`/`implements` and are skipped.
 
+## Analysis roots
+
+`analysis_scope_from_config` turns the roots and selection keys in `.deputyconfig` into a deproc `AnalysisScope`. `_process_files` then parses and links each language and root with its own context, merges the per-root results into one registry for the language, and applies Python's rule that a regular package wins over a same-named namespace portion in another root before persisting. Language semantics stay in deproc. deputy owns the configuration, the root-qualified file keys, and the persisted root metadata. See [Configuration](config.md#analysis-roots).
+
 ## Dependencies
 
 | Package | Role |

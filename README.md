@@ -36,6 +36,16 @@ deputy config display_mode tree       # tree view for search results
 deputy config sync_deps true          # index .venv dependencies
 ```
 
+To index more than the project directory, add roots. Lists use `:` as the separator (`;` on Windows), and relative paths resolve against the directory where `deputy init` ran:
+
+```bash
+deputy config source_roots ../shared/src:vendor/tools
+deputy config generated_roots build/generated
+deputy config analysis_languages python
+```
+
+See the [configuration reference](https://gurveervirk.github.io/deputy/reference/config/#analysis-roots) for all keys, how overlapping roots are resolved, and how files are identified.
+
 ## Logging
 
 ```bash

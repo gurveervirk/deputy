@@ -27,6 +27,16 @@ With a value, persists the key-value pair. Without a value, prints the current s
 | `log_level` | `WARNING` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `log_file` | `.deputy/deputy.log` | Path to the log file |
 | `display_mode` | `table` | Search result display: `table` or `tree` |
+| `project_roots` | *(the project directory)* | Directories indexed as the project. Replaces the default when set |
+| `source_roots` | *(none)* | Extra source directories |
+| `generated_roots` | *(none)* | Generated-code directories |
+| `declaration_roots` | *(none)* | Declaration and stub directories, for example `.pyi` files |
+| `dependency_roots` | *(none)* | Dependency source directories indexed during `deputy sync` |
+| `analysis_languages` | *(all supported)* | Comma-separated languages to index, for example `python,java` |
+| `analysis_extensions` | *(all supported)* | Comma-separated file extensions to index, for example `.py,.java` |
+| `analysis_exclusions` | *(none)* | Comma-separated name patterns to skip, in addition to the built-in excluded paths |
+
+The roots keys take a list separated by `:` (`;` on Windows). See [Configuration](../reference/config.md#analysis-roots) for how roots, overlap and selection work.
 
 ## Examples
 
@@ -35,6 +45,8 @@ deputy config enable_cache true
 deputy config display_mode tree
 deputy config log_level DEBUG
 deputy config auto_sync true
+deputy config source_roots ../shared/src
+deputy config analysis_languages python
 ```
 
 Log level also respects the `DEPUTY_LOG_LEVEL` environment variable.

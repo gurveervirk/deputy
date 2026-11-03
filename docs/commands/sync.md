@@ -4,7 +4,7 @@ title: sync
 
 # `deputy sync`
 
-Scans Python source files, parses them with deproc, and indexes all discovered entities.
+Scans Python and Java source files, parses them with deproc, and indexes all discovered entities.
 
 ## Usage
 
@@ -23,6 +23,7 @@ deputy sync [--force] [--sync-deps] [--no-sync-deps]
 ## Behaviour
 
 - **Incremental by default**: only files whose content hash changed since the last sync are re-parsed.
+- **Configured roots**: besides the project directory, `deputy sync` indexes the directories in `source_roots`, `generated_roots`, `declaration_roots` and `dependency_roots`, and applies `analysis_languages`, `analysis_extensions` and `analysis_exclusions`. See [Analysis roots](../reference/config.md#analysis-roots).
 - **`--sync-deps`** indexes each dependency package's top-level modules as separate entities tagged with `source: "dependency"`. Editable (path-based) dependencies are followed to their source directories.
 - **Dependency config**: can also be set persistently via `deputy config sync_deps true`.
 

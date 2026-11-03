@@ -22,6 +22,21 @@ Each entity stores a `metadata_json` blob with type-specific fields.
 |-------|-------------|
 | `path` | Relative file path |
 | `all_exports` | Contents of `__all__` |
+| `module_name` | Java packages only: the named module that declares the package |
+
+## Analysis roots
+
+Entities outside the default project directory record the root they came from. See [Analysis roots](config.md#analysis-roots).
+
+| Field | Description |
+|-------|-------------|
+| `root_id` | Root identifier, for example `source-5c6b531272969254` |
+| `root_kind` | `project`, `source`, `generated`, `declaration` or `dependency` |
+| `root_path` | Absolute path of the root |
+| `source_root_id` | Same identifier as `root_id`, present on module entities |
+| `roots` | Packages shared by several roots: a list of objects with `root_id`, `root_kind` and `root_path` |
+
+Entities from the default project directory carry none of these fields, except that a package shared with another root lists the project directory in `roots`.
 
 ## Functions, methods, classes
 
