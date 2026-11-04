@@ -19,10 +19,10 @@ With a value, persists the key-value pair. Without a value, prints the current s
 | Key | Default | Description |
 |-----|---------|-------------|
 | `db_path` | `.deputy.db` | Path to the SQLite database |
-| `venv_path` | *(auto-detected)* | Path to the project virtual environment |
+| `venv_path` | *(auto-detected)* | Path to the project virtual environment. It must contain `pyvenv.cfg`; otherwise deputy uses `$VIRTUAL_ENV`, then `<project>/.venv` |
 | `sync_deps` | `false` | Whether `deputy sync` should also index `.venv` dependencies |
 | `max_dep_files` | `5000` | Maximum files to index from dependencies |
-| `enable_cache` | `false` | Cache symbol resolution results (`deputy info --resolve`) |
+| `enable_cache` | `false` | Cache symbol resolution results in the database |
 | `auto_sync` | `false` | Auto-sync before `search` and `info` if source files changed |
 | `log_level` | `WARNING` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `log_file` | `.deputy/deputy.log` | Path to the log file |

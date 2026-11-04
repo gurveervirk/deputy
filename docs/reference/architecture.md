@@ -69,7 +69,7 @@ SQLite database (.deputy.db)
 
 ## Branch awareness
 
-deputy is branch-aware. The `branch_entities` and `branch_files` tables track which entities and files belong to which git branch. The current branch is auto-detected via `git branch --show-current`.
+deputy is branch-aware. The `branch_entities` and `branch_files` tables track which entities and files belong to which git branch. The current branch is read with `git rev-parse --abbrev-ref HEAD`. In a detached HEAD state that is `HEAD`, and outside a git repository deputy uses the branch name `default`.
 
 - `deputy sync` only re-parses files that changed on the current branch
 - `deputy subclasses` scopes results to the current branch by default

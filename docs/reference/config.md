@@ -11,7 +11,7 @@ deputy uses a flat key-value config file (`.deputyconfig`) in the project root.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `db_path` | `.deputy.db` | Path to the SQLite database |
-| `venv_path` | *(auto-detected)* | Path to the project virtual environment |
+| `venv_path` | *(auto-detected)* | Path to the project virtual environment. It must contain `pyvenv.cfg`; otherwise deputy uses `$VIRTUAL_ENV`, then `<project>/.venv` |
 | `sync_deps` | `false` | Whether `deputy sync` should also index `.venv` dependencies |
 | `max_dep_files` | `5000` | Maximum files to index from dependencies |
 | `enable_cache` | `false` | Cache symbol resolution results |

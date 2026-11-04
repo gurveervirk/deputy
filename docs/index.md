@@ -1,10 +1,10 @@
 ---
-title: deputy - Code intelligence CLI for Python
+title: deputy - Code intelligence CLI for Python and Java
 ---
 
 # deputy
 
-Code intelligence CLI for Python. Parses source files with [deproc](https://github.com/gurveervirk/deproc), stores entities (classes, functions, imports, etc.) in a local SQLite database, and provides commands to search, inspect, and resolve symbols.
+Code intelligence CLI for Python and Java. Parses source files with [deproc](https://github.com/gurveervirk/deproc), stores entities (classes, functions, imports, etc.) in a local SQLite database, and provides commands to search, inspect, and resolve symbols.
 
 ## Install
 
