@@ -47,6 +47,21 @@ Use `deputy info --list-columns` to see this list, or `-c` to select specific co
 | `inherited_from` | Class in MRO providing this member (if inherited) |
 | `visibility` | `public` / `private` |
 | `exported` | Whether exported in `__all__` |
+| `annotations` | Annotations (for example Java annotations) |
+| `superclass` | Java superclass |
+| `implements` | Java implemented interfaces |
+| `is_abstract` | Whether abstract (Java and Python) |
+| `is_final` | Whether final (Java) |
+| `is_static` | Whether static (Java and Python) |
+| `requires` | Java module: required modules |
+| `requires_static` | Java module: static-required modules |
+| `requires_transitive` | Java module: transitive-required modules |
+| `exports` | Java module: exported packages |
+| `qualified_exports` | Java module: qualified exports (package to targets) |
+| `opens` | Java module: opened packages |
+| `qualified_opens` | Java module: qualified opens (package to targets) |
+| `uses` | Java module: service uses |
+| `provides` | Java module: service provides (service to implementations) |
 
 ## Class entities
 

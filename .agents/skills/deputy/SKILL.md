@@ -28,6 +28,18 @@ Use `deputy <command> --help` for the most accurate and up-to-date usage informa
 
 `deputy pin-inheritance <class> <base> <file:line>` — pin unresolved base. `--list` view pins. `--remove` unpin.
 
+## Widening the indexed scope
+
+By default only the directory where `deputy init` ran is indexed. If an entity you expect is missing because it lives in generated code, stubs or a sibling directory, add a root and sync again:
+
+```bash
+deputy config source_roots ../shared/src:vendor/tools
+deputy config generated_roots build/generated
+deputy sync
+```
+
+Other keys: `declaration_roots`, `dependency_roots`, `project_roots` (replaces the default project directory), `analysis_languages`, `analysis_extensions`, `analysis_exclusions`. Lists use `:` as the separator (`;` on Windows). Module names are relative to their own root, so a file `vendor/tools/x.py` indexed from the source root `vendor/tools` is module `x`. Read `docs/reference/config.md` for the full rules.
+
 ## When to use me
 - Finding where a function or class is defined
 - Understanding class inheritance and MRO

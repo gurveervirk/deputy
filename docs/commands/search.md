@@ -17,13 +17,24 @@ deputy search [options] <regex>
 | Flag | Description |
 |------|-------------|
 | `--type` / `-t TEXT` | Filter by entity type. Repeatable. |
-| `--language` / `-l TEXT` | Filter by language (e.g. `python`) |
+| `--language` / `-l TEXT` | Filter by language: `python` or `java` |
 | `--limit INT` | Max results |
 | `--offset INT` | Result offset |
 | `--exact` / `-e` | Exact match on `full_path` (no regex) |
 | `--name-only` / `-n` | Match name only, not `full_path` |
 
-**Entity types:** `FUNCTION`, `CLASS`, `MODULE`, `PACKAGE`, `CONSTANT`, `TYPE_ALIAS`, `IMPORT_ALIAS`, `INHERITED_MEMBER`
+## Entity types
+
+| Language | Types |
+|----------|-------|
+| Python | `PYTHON_MODULE`, `PACKAGE`, `NAMESPACE_PACKAGE`, `CLASS`, `FUNCTION`, `METHOD`, `CONSTANT`, `VARIABLE`, `IMPORT_ALIAS`, `INHERITED_MEMBER` |
+| Java | `COMPILATION_UNIT`, `PACKAGE`, `PACKAGE_INFO`, `JAVA_MODULE`, `CLASS`, `INTERFACE`, `ENUM`, `ENUM_CONSTANT`, `RECORD`, `RECORD_COMPONENT`, `ANNOTATION_TYPE`, `CONSTRUCTOR`, `METHOD`, `FIELD` |
+
+`IMPORT_STATEMENT`, `IMPORT`, `CONTROL_FLOW_BLOCK` and `CONTROL_FLOW_GROUP` entities are stored in the database but never appear in search results.
+
+```bash
+deputy search "Controller" --language java --type CLASS
+```
 
 ## Display modes
 

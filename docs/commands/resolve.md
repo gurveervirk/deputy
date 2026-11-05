@@ -22,6 +22,9 @@ deputy resolve <symbol> [options]
 | `--step` | Stop at every step regardless of ambiguity |
 | `--all` | Show all possible resolutions |
 | `--compact` | Compact output with `--all` (terminal entities only) |
+| `--deproc` | Resolve through deproc's resolver for the current branch instead of walking the stored import aliases |
+
+With `--deproc`, the default and `--auto` output reports the final resolution without the intermediate alias steps. The `--all` output is the same as without it.
 
 ## Behaviour
 

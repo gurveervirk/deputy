@@ -20,7 +20,7 @@ Creates `.deputy.db` in the current directory and auto-detects your virtual envi
 deputy sync
 ```
 
-Parses all Python source files under the current directory and indexes them into the database. Incremental by default - only changed files are re-parsed.
+Parses all Python and Java source files under the current directory and indexes them into the database. Incremental by default - only changed files are re-parsed.
 
 ## 3. Search for entities
 
