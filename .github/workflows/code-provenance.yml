@@ -10,13 +10,24 @@ on:
       - reopened
       - ready_for_review
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      scan_mode:
+        description: Scan mode passed to the scanner
+        required: false
+        type: string
+        default: full
 
 permissions: {}
+
+concurrency:
+  group: code-provenance-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   code-provenance:
     name: Code Provenance
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft)
     permissions:
       checks: write
       contents: read
@@ -39,7 +50,7 @@ jobs:
         with:
           github.token: ${{ github.token }}
           runtimeContainer: ghcr.io/scanoss/scanoss-py@sha256:33a63229a4e36771dc90d1e7efc79f57e4e57d3a4b5c20cf52ea2c70f964481c
-          scanMode: ${{ github.event_name == 'workflow_dispatch' && 'full' || 'delta' }}
+          scanMode: ${{ inputs.scan_mode || (github.event_name == 'workflow_dispatch' && 'full' || 'delta') }}
           scanPath: .
           scanFiles: true
           skipSnippets: false

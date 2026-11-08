@@ -40,7 +40,7 @@ A reviewed task branch is merged to `main` through its own pull request. `integr
 
 Task branches may be merged into `integration` so unapproved work can be tested together. Do not rewrite the history of `main`, `integration`, or any pushed branch that others build on. Rebuilding `integration` from `main` requires the owner's approval.
 
-Code Provenance runs only for pull requests against `main`. The `docs` workflow runs only on pushes to `main`.
+Code Provenance runs only for pull requests against `main`, and skips draft pull requests. Open the pull request as a draft while iterating and mark it ready for review when it is final; that starts the scan. Pushes after that re-scan, and a newer push cancels a scan still in progress. The scan is not a required check, so a failure from an unavailable scanner (for example a rate limit) does not block the merge. It does block a release: `publish.yml` runs a full scan before publishing. Rerun a failed scan with `gh run rerun <run-id> --failed`, or start a full scan by hand with the `workflow_dispatch` trigger. The `docs` workflow runs only on pushes to `main`.
 
 ## Commits
 

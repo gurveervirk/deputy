@@ -1,6 +1,6 @@
 # Release checklist
 
-Pushing a tag named `v<version>` runs `.github/workflows/publish.yml`, which validates the version, runs the tests and a clean-wheel install check, and publishes `deputy-cli` through PyPI trusted publishing in the `pypi-deputy` environment. Releases are cut from `main` by the owner.
+Pushing a tag named `v<version>` runs `.github/workflows/publish.yml`, which validates the version, runs the tests, a clean-wheel install check and a full Code Provenance scan, and publishes `deputy-cli` through PyPI trusted publishing in the `pypi-deputy` environment. Releases are cut from `main` by the owner.
 
 ## Before tagging
 
@@ -22,7 +22,7 @@ Pushing a tag named `v<version>` runs `.github/workflows/publish.yml`, which val
 ## Tag and publish
 
 - [ ] Tag the merged `main` commit as `v<version>`; the tag must equal `pyproject.toml` `version`, and `_version.py` must match, or `validate-release` fails
-- [ ] Push the tag; `publish.yml` runs `validate-release`, `test`, `clean-install`, then `publish`
+- [ ] Push the tag; `publish.yml` runs `validate-release`, then `test`, `clean-install` and `provenance`, then `publish`; if the scanner is rate-limited, rerun the failed job once the limit lifts
 - [ ] Confirm the new version is visible on PyPI and installs in a clean environment
 - [ ] Publish the GitHub release for the tag with the release notes
 - [ ] The `docs` workflow deploys the site when `docs/**` or `mkdocs.yml` change on `main`; confirm it succeeded if docs changed
