@@ -82,8 +82,18 @@ jobs:
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/deputy-clean/bin/python" -m pytest "$RUNNER_TEMP/deputy-tests" -q
 
+  provenance:
+    needs: validate-release
+    uses: ./.github/workflows/code-provenance.yml
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: write
+    with:
+      scan_mode: full
+
   publish:
-    needs: [validate-release, test, clean-install]
+    needs: [validate-release, test, clean-install, provenance]
     runs-on: ubuntu-latest
     environment: pypi-deputy
     permissions:
