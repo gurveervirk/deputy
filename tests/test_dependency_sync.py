@@ -2,6 +2,9 @@ import json
 import os
 import shutil
 
+from typer.testing import CliRunner
+
+from deputy import app
 from deputy.database.sqlite import init_schema, open_database, set_config
 from deputy.tools.core import run_sync
 
@@ -216,3 +219,88 @@ def test_dependency_entities_are_mapped_to_a_new_branch(tmp_path, monkeypatch):
 
     assert "acme_billing.invoice.Invoice" in _dependency_paths(conn, "feature")
     assert "acme_billing.invoice.Invoice" in _dependency_paths(conn, "main")
+
+
+PARCEL = "acme_shipping.parcel.Parcel"
+INVOICE = "acme_billing.invoice.Invoice"
+
+
+def _cli(*args):
+    return CliRunner().invoke(app, list(args))
+
+
+def _init_cli_project(tmp_path, monkeypatch):
+    project, venv, site_packages = _make_project(tmp_path)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.chdir(project)
+    assert _cli("init").exit_code == 0
+    (project / ".deputyconfig").write_text(f"venv_path={venv}\n")
+    assert _cli("sync", "--sync-deps").exit_code == 0
+    return project, site_packages
+
+
+def _cli_finds(fqn):
+    result = _cli("search", "--exact", fqn)
+    assert result.exit_code == 0
+    return "No matching entities found" not in result.output
+
+
+def test_cli_finds_dependency_installed_without_project_change(tmp_path, monkeypatch):
+    _project, site_packages = _init_cli_project(tmp_path, monkeypatch)
+    assert _cli_finds(INVOICE)
+    assert not _cli_finds(PARCEL)
+
+    _install_shipping(site_packages)
+    sync = _cli("sync", "--sync-deps")
+
+    assert sync.exit_code == 0
+    assert "Sync complete" in sync.output
+    assert _cli_finds(PARCEL)
+    info = _cli("info", PARCEL)
+    assert info.exit_code == 0
+    assert PARCEL in info.output
+    assert "CLASS" in info.output
+    assert _cli_finds(INVOICE)
+
+
+def test_cli_stops_finding_dependency_removed_without_project_change(
+    tmp_path, monkeypatch
+):
+    project, site_packages = _init_cli_project(tmp_path, monkeypatch)
+    _install_shipping(site_packages)
+    _add_extra_class(project)
+    assert _cli("sync", "--sync-deps").exit_code == 0
+    assert _cli_finds(PARCEL)
+
+    shutil.rmtree(site_packages / "acme_shipping")
+    shutil.rmtree(site_packages / "acme-shipping-1.0.dist-info")
+    assert _cli("sync", "--sync-deps").exit_code == 0
+
+    assert not _cli_finds(PARCEL)
+    assert "Entity not found" in _cli("info", PARCEL).output
+    assert _cli_finds(INVOICE)
+
+
+def test_cli_finds_dependency_again_after_sync_deps_is_toggled(tmp_path, monkeypatch):
+    project, _site_packages = _init_cli_project(tmp_path, monkeypatch)
+    assert _cli_finds(INVOICE)
+
+    _add_extra_class(project)
+    assert _cli("sync", "--no-sync-deps").exit_code == 0
+    assert not _cli_finds(INVOICE)
+
+    assert _cli("sync", "--sync-deps").exit_code == 0
+    assert _cli_finds(INVOICE)
+
+
+def test_cli_dependency_sync_is_repeatable(tmp_path, monkeypatch):
+    _project, site_packages = _init_cli_project(tmp_path, monkeypatch)
+    _install_shipping(site_packages)
+    assert _cli("sync", "--sync-deps").exit_code == 0
+    first = _cli("search", "acme_")
+    assert _cli("sync", "--sync-deps").exit_code == 0
+    second = _cli("search", "acme_")
+
+    assert first.exit_code == second.exit_code == 0
+    assert first.output == second.output
+    assert PARCEL in first.output
