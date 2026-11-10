@@ -123,6 +123,33 @@ def _dependency_names(conn):
     return {row["package_name"] for row in conn.execute("SELECT * FROM dependencies")}
 
 
+def _dependency_version(conn, package_name):
+    row = conn.execute(
+        "SELECT version FROM dependencies WHERE package_name = ?", (package_name,)
+    ).fetchone()
+    return row["version"] if row else None
+
+
+def _dangling_mappings(conn):
+    return conn.execute(
+        "SELECT COUNT(*) FROM branch_entities "
+        "WHERE entity_id NOT IN (SELECT id FROM entities)"
+    ).fetchone()[0]
+
+
+def _upgrade_billing(site_packages):
+    shutil.rmtree(site_packages / "acme-billing-1.0.dist-info")
+    dist_info = site_packages / "acme-billing-2.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: acme-billing\nVersion: 2.0\n"
+    )
+    (dist_info / "top_level.txt").write_text("acme_billing\n")
+    (site_packages / "acme_billing" / "invoice.py").write_text(
+        "class Bill:\n    pass\n"
+    )
+
+
 def test_dependency_installed_without_project_change_is_indexed(tmp_path, monkeypatch):
     project, venv, site_packages = _make_project(tmp_path)
     _sync_with_dependencies(tmp_path, monkeypatch, project, venv).close()
@@ -146,11 +173,7 @@ def test_dependency_removed_without_project_change_is_cleaned(tmp_path, monkeypa
 
     assert _dependency_paths(conn) == set()
     assert "acme-billing" not in _dependency_names(conn)
-    dangling = conn.execute(
-        "SELECT COUNT(*) FROM branch_entities "
-        "WHERE entity_id NOT IN (SELECT id FROM entities)"
-    ).fetchone()[0]
-    assert dangling == 0
+    assert _dangling_mappings(conn) == 0
 
 
 def test_dependency_installed_with_mtime_only_project_change_is_mapped(
@@ -166,6 +189,39 @@ def test_dependency_installed_with_mtime_only_project_change_is_mapped(
     conn = _resync(tmp_path)
 
     assert "acme_shipping.parcel.Parcel" in _dependency_paths(conn, "main")
+
+
+def test_dependency_upgraded_without_project_change_replaces_entities(
+    tmp_path, monkeypatch
+):
+    project, venv, site_packages = _make_project(tmp_path)
+    _sync_with_dependencies(tmp_path, monkeypatch, project, venv).close()
+
+    _upgrade_billing(site_packages)
+    conn = _resync(tmp_path)
+
+    assert "acme_billing.invoice.Bill" in _dependency_paths(conn, "main")
+    assert "acme_billing.invoice.Invoice" not in _dependency_paths(conn)
+    assert _dependency_version(conn, "acme-billing") == "2.0"
+    assert _dangling_mappings(conn) == 0
+
+
+def test_dependency_upgraded_with_mtime_only_project_change_replaces_entities(
+    tmp_path, monkeypatch
+):
+    project, venv, site_packages = _make_project(tmp_path)
+    _sync_with_dependencies(tmp_path, monkeypatch, project, venv).close()
+
+    _upgrade_billing(site_packages)
+    source = project / "app.py"
+    stat = source.stat()
+    os.utime(source, (stat.st_atime, stat.st_mtime + 100))
+    conn = _resync(tmp_path)
+
+    assert "acme_billing.invoice.Bill" in _dependency_paths(conn, "main")
+    assert "acme_billing.invoice.Invoice" not in _dependency_paths(conn)
+    assert _dependency_version(conn, "acme-billing") == "2.0"
+    assert _dangling_mappings(conn) == 0
 
 
 def test_unchanged_dependency_is_not_reprocessed(tmp_path, monkeypatch):
