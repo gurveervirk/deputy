@@ -60,7 +60,12 @@ def process_dependency(
             "source": "dependency",
             "package_name": package_name,
         })
-        all_entities.extend(records)
+        all_entities.extend(
+            r
+            for r in records
+            if r["full_path"] == module_name
+            or r["full_path"].startswith(f"{module_name}.")
+        )
 
     db_delete_entities_by_package(conn, package_name)
     entity_ids: list[str] = []
