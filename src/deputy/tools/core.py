@@ -15,12 +15,13 @@ from deputy.database.sqlite import (
     clean_stale_inheritance_rows,
     delete_branch_entities,
     delete_branch_file,
+    delete_dangling_branch_entities,
     delete_dependency,
     delete_entities_by_package,
     get_branch_files,
     get_config,
     get_dependency,
-    get_dependency_entity_ids,
+    get_dependency_entity_ids_by_package,
     get_entities_by_path,
     get_entity_by_id,
     get_entity_by_path,
@@ -111,11 +112,13 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
         len(deleted),
     )
 
-    dep_ids = _sync_deps_if_needed(conn, ctx, base_path, sync_deps, force, branch)
+    dep_ids = _sync_deps_if_needed(conn, ctx, base_path, sync_deps)
+    upsert_branch_entities(conn, branch, dep_ids)
 
     if not changed and not deleted and not mtime_only:
-        logger.info("sync complete — no changes")
+        conn.commit()
         conn.close()
+        logger.info("sync complete — no project changes")
         return
 
     if not changed:
@@ -181,9 +184,7 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     )
 
 
-def _sync_deps_if_needed(
-    conn, ctx, base_path, sync_deps_override, force, branch
-) -> list[str]:
+def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override) -> list[str]:
     if sync_deps_override is None:
         sync_deps = get_config(conn, "sync_deps") == "true"
     else:
@@ -211,6 +212,7 @@ def _sync_deps_if_needed(
         "dependency sync — %d packages found in %s", len(packages), site_packages
     )
     tracked_deps = {p["package_name"] for p in list_dependencies(conn)}
+    entity_ids_by_package = get_dependency_entity_ids_by_package(conn)
     current_names = set()
     all_ids: list[str] = []
     for pkg in packages:
@@ -227,9 +229,10 @@ def _sync_deps_if_needed(
             and tracked["version"] == pkg.version
             and tracked.get("last_modified") == pkg.mtime
         ):
-            existing = get_dependency_entity_ids(conn, branch, pkg.name)
-            all_ids.extend(existing)
-            continue
+            existing = entity_ids_by_package.get(pkg.name)
+            if existing:
+                all_ids.extend(existing)
+                continue
         ids = process_dependency(
             pkg.name,
             pkg.install_path,
@@ -238,12 +241,14 @@ def _sync_deps_if_needed(
             ctx,
             conn,
             max_files,
+            last_modified=pkg.mtime,
         )
         all_ids.extend(ids)
     for name in tracked_deps - current_names:
         logger.info("removing stale dependency: %s", name)
         delete_entities_by_package(conn, name)
         delete_dependency(conn, name)
+    delete_dangling_branch_entities(conn)
 
     logger.info("dependency sync complete — %d packages synced", len(packages))
     return all_ids

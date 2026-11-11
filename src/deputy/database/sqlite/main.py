@@ -664,18 +664,24 @@ def upsert_branch_entities(
     )
 
 
-def get_dependency_entity_ids(
-    conn: sqlite3.Connection, branch_name: str, package_name: str
-) -> list[str]:
+def get_dependency_entity_ids_by_package(
+    conn: sqlite3.Connection,
+) -> dict[str, list[str]]:
     rows = conn.execute(
-        """SELECT be.entity_id FROM branch_entities be
-           JOIN entities e ON be.entity_id = e.id
-           WHERE be.branch_name = ?
-           AND json_extract(e.metadata_json, '$.source') = 'dependency'
-           AND json_extract(e.metadata_json, '$.package_name') = ?""",
-        (branch_name, package_name),
+        """SELECT id, json_extract(metadata_json, '$.package_name') AS package_name
+           FROM entities
+           WHERE json_extract(metadata_json, '$.source') = 'dependency'"""
     ).fetchall()
-    return [r["entity_id"] for r in rows]
+    grouped: dict[str, list[str]] = {}
+    for row in rows:
+        grouped.setdefault(row["package_name"], []).append(row["id"])
+    return grouped
+
+
+def delete_dangling_branch_entities(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "DELETE FROM branch_entities WHERE entity_id NOT IN (SELECT id FROM entities)"
+    )
 
 
 def delete_branch_entities(conn: sqlite3.Connection, branch_name: str) -> None:

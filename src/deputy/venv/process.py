@@ -21,6 +21,8 @@ def process_dependency(
     template_ctx: Context,
     conn,
     max_files: int = 5000,
+    *,
+    last_modified: float,
 ) -> list[str]:
     all_entities: list[dict] = []
     total_files = 0
@@ -74,7 +76,7 @@ def process_dependency(
         package_path=install_path,
         source="venv",
         metadata_json=None,
-        last_modified=os.path.getmtime(install_path) if os.path.exists(install_path) else None,
+        last_modified=last_modified,
     )
 
     return entity_ids
