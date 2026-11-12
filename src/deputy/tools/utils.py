@@ -28,7 +28,7 @@ logger = get_logger("tools.utils")
 
 LANGUAGE_EXTENSIONS = {
     "python": (".py", ".pyi"),
-    "java": (".java"),
+    "java": (".java",),
 }
 
 
