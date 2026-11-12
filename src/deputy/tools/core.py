@@ -184,9 +184,16 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     )
 
 
+def _configured_sync_deps(conn) -> bool:
+    file_value = read_config().get("sync_deps")
+    if file_value is not None:
+        return file_value == "true"
+    return get_config(conn, "sync_deps") == "true"
+
+
 def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override) -> list[str]:
     if sync_deps_override is None:
-        sync_deps = get_config(conn, "sync_deps") == "true"
+        sync_deps = _configured_sync_deps(conn)
     else:
         sync_deps = sync_deps_override
     if not sync_deps:

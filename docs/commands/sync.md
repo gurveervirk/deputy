@@ -25,7 +25,7 @@ deputy sync [--force] [--sync-deps] [--no-sync-deps]
 - **Incremental by default**: only files whose content hash changed since the last sync are re-parsed.
 - **Configured roots**: besides the project directory, `deputy sync` indexes the directories in `source_roots`, `generated_roots`, `declaration_roots` and `dependency_roots`, and applies `analysis_languages`, `analysis_extensions` and `analysis_exclusions`. See [Analysis roots](../reference/config.md#analysis-roots).
 - **`--sync-deps`** indexes each dependency package's top-level modules as separate entities tagged with `source: "dependency"`. Editable (path-based) dependencies are followed to their source directories.
-- **Dependency config**: can also be set persistently via `deputy config sync_deps true`.
+- **Dependency config**: can also be set persistently via `deputy config sync_deps true`. The order is the `--sync-deps` / `--no-sync-deps` flag, then `sync_deps` in `.deputyconfig`, then a `sync_deps` value stored in an older database. This also applies when `auto_sync` runs a sync before `search` or `info`.
 - **Which environment**: deputy uses `venv_path` from `.deputyconfig` if that directory contains `pyvenv.cfg`, then `$VIRTUAL_ENV`, then `<project>/.venv`.
 - **Packages without `top_level.txt`**: only packages that ship a `top_level.txt` in their `.dist-info` directory get entities. Other installed packages are recorded in the `dependencies` table but contribute no entities.
 
