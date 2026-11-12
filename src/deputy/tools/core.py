@@ -290,7 +290,7 @@ def search_entities(
         exact=exact,
         name_only=name_only,
     )
-    logger.debug("search for %q returned %d results", pattern, len(results))
+    logger.debug("search for %r returned %d results", pattern, len(results))
     conn.close()
     return results
 
