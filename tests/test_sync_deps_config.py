@@ -70,17 +70,8 @@ def _store_in_database(project, value):
     conn.close()
 
 
-def test_value_stored_in_the_database_still_enables_dependency_sync(cli_project):
+def test_value_stored_in_the_database_is_ignored(cli_project):
     _store_in_database(cli_project, "true")
-
-    assert _cli("sync").exit_code == 0
-
-    assert _cli_finds(INVOICE)
-
-
-def test_config_file_value_wins_over_the_database_value(cli_project):
-    _store_in_database(cli_project, "true")
-    assert _cli("config", "sync_deps", "false").exit_code == 0
 
     assert _cli("sync").exit_code == 0
 
