@@ -20,7 +20,7 @@ CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 CREATE INDEX IF NOT EXISTS idx_entities_full_path ON entities(full_path);
 CREATE INDEX IF NOT EXISTS idx_entities_parent_id ON entities(parent_id);
 
-CREATE TABLE IF NOT EXISTS config (
+CREATE TABLE IF NOT EXISTS metadata (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );

@@ -5,7 +5,7 @@ import shutil
 from typer.testing import CliRunner
 
 from deputy import app
-from deputy.database.sqlite import init_schema, open_database, set_config
+from deputy.database.sqlite import init_schema, open_database, set_metadata
 from deputy.tools.core import run_sync
 
 
@@ -27,7 +27,7 @@ def _sync_with_dependencies(tmp_path, monkeypatch, project, venv):
     db_path = tmp_path / "deputy.db"
     conn = open_database(str(db_path))
     init_schema(conn)
-    set_config(conn, "base_path", str(project))
+    set_metadata(conn, "base_path", str(project))
     conn.commit()
     conn.close()
     (project / ".deputyconfig").write_text(f"venv_path={venv}\n")

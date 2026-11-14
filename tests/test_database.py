@@ -12,7 +12,6 @@ from deputy.database.sqlite import (
     delete_inheritance_pin,
     get_branch_entities,
     get_branch_files,
-    get_config,
     get_direct_bases,
     get_direct_implementations,
     get_direct_subclasses,
@@ -24,12 +23,13 @@ from deputy.database.sqlite import (
     get_entity_ids_by_fqn,
     get_filtered_entities_by_path,
     get_inheritance_pin,
+    get_metadata,
     get_transitive_subclasses,
     init_schema,
     list_inheritance_pins,
     open_database,
     search_entities,
-    set_config,
+    set_metadata,
     update_mtime,
     upsert_branch_entities,
     upsert_branch_file,
@@ -206,20 +206,20 @@ class TestEntities:
         assert [r["id"] for r in rows] == ["e1", "e2", "e3"]
 
 
-class TestConfig:
+class TestMetadata:
     def test_set_and_get(self, db):
-        set_config(db, "key1", "val1")
-        set_config(db, "key2", "val2")
-        assert get_config(db, "key1") == "val1"
-        assert get_config(db, "key2") == "val2"
+        set_metadata(db, "key1", "val1")
+        set_metadata(db, "key2", "val2")
+        assert get_metadata(db, "key1") == "val1"
+        assert get_metadata(db, "key2") == "val2"
 
     def test_get_missing(self, db):
-        assert get_config(db, "nonexistent") is None
+        assert get_metadata(db, "nonexistent") is None
 
     def test_set_replaces(self, db):
-        set_config(db, "key", "old")
-        set_config(db, "key", "new")
-        assert get_config(db, "key") == "new"
+        set_metadata(db, "key", "old")
+        set_metadata(db, "key", "new")
+        assert get_metadata(db, "key") == "new"
 
 
 class TestBranchEntities:

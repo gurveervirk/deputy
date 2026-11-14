@@ -18,7 +18,7 @@ SQLite database in WAL mode with a custom `REGEXP` function registered for searc
 | `cache_entries` | Resolved symbol cache per (module_fqn, symbol_name) |
 | `cache_module_links` | Cross-module cache linkage for invalidation |
 | `dependencies` | Indexed dependency packages - name, version, install_path, source |
-| `config` | Key-value store (`base_path`, `deputy_cli_version`) |
+| `metadata` | Key-value store about the database itself (`base_path`, `deputy_cli_version`) |
 | `class_bases` | Base class relationships - class_entity_id, base_full_path, base_entity_id, is_resolved |
 | `inheritance_pins` | User-managed pins for disambiguating unresolved base classes |
 
@@ -106,14 +106,14 @@ One row per package indexed by `deputy sync --sync-deps`.
 
 A package whose `version` and `last_modified` have not changed is skipped on the next sync. A package that is no longer installed has its entities and its row removed.
 
-## `config`
+## `metadata`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `key` | TEXT PK | Setting name |
-| `value` | TEXT | Setting value |
+| `key` | TEXT PK | Metadata name |
+| `value` | TEXT | Metadata value |
 
-`deputy init` writes two keys: `base_path`, the directory where `deputy init` ran, and `deputy_cli_version`, the version that created the database. This table is separate from `.deputyconfig`.
+`deputy init` writes two keys: `base_path`, the directory where `deputy init` ran, and `deputy_cli_version`, the version that created the database. These are not user settings. User settings live in `.deputyconfig`, and `deputy config` does not read or write this table. Databases created by earlier versions have this table under the name `config`; it is renamed the first time a newer version opens the database.
 
 ## `cache_entries`
 

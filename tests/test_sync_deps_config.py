@@ -6,7 +6,7 @@ from test_dependency_sync import (
     _make_project,
 )
 
-from deputy.database.sqlite import open_database, set_config
+from deputy.database.sqlite import open_database, set_metadata
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ def test_config_key_false_keeps_dependency_sync_off(cli_project):
 
 def _store_in_database(project, value):
     conn = open_database(str(project / ".deputy.db"))
-    set_config(conn, "sync_deps", value)
+    set_metadata(conn, "sync_deps", value)
     conn.commit()
     conn.close()
 

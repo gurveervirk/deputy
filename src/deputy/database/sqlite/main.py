@@ -26,7 +26,24 @@ def _regexp(pattern: str, value: str) -> bool:
     return re.search(pattern, value) is not None
 
 
+def _migrate_config_table(conn: sqlite3.Connection) -> None:
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if "config" not in tables:
+        return
+    if "metadata" in tables:
+        conn.execute(
+            "INSERT OR IGNORE INTO metadata (key, value) SELECT key, value FROM config"
+        )
+        conn.execute("DROP TABLE config")
+    else:
+        conn.execute("ALTER TABLE config RENAME TO metadata")
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
+    _migrate_config_table(conn)
     schema_path = Path(__file__).parent / "schema.sql"
     conn.executescript(schema_path.read_text())
     columns = {
@@ -478,16 +495,16 @@ def search_entities(
     return [dict(row) for row in rows]
 
 
-def set_config(conn: sqlite3.Connection, key: str, value: str) -> None:
+def set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.execute(
-        "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
         (key, value),
     )
 
 
-def get_config(conn: sqlite3.Connection, key: str) -> str | None:
+def get_metadata(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute(
-        "SELECT value FROM config WHERE key = ?",
+        "SELECT value FROM metadata WHERE key = ?",
         (key,),
     ).fetchone()
     return row["value"] if row else None

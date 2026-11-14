@@ -8,7 +8,7 @@ from deputy.database.sqlite import (
     get_branch_files,
     init_schema,
     open_database,
-    set_config,
+    set_metadata,
 )
 from deputy.tools.core import run_sync
 from deputy.tools.deproc_resolution import build_context_from_records
@@ -107,7 +107,7 @@ def test_run_sync_persists_root_qualified_file_keys(tmp_path, monkeypatch):
     db_path = tmp_path / "deputy.db"
     conn = open_database(str(db_path))
     init_schema(conn)
-    set_config(conn, "base_path", str(project))
+    set_metadata(conn, "base_path", str(project))
     conn.commit()
     conn.close()
 
