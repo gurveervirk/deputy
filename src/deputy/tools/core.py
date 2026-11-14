@@ -76,7 +76,13 @@ def init_database(path: str) -> None:
         write_config("venv_path", venv_path)
 
 
-def run_sync(force: bool, sync_deps: bool | None = None) -> None:
+def run_sync(
+    force: bool, sync_deps: bool | None = None, force_deps: bool = False
+) -> None:
+    if force_deps and sync_deps is False:
+        raise ValueError("force_deps requires dependency sync; sync_deps is False")
+    if force_deps:
+        sync_deps = True
     conn = _open_database()
     branch = get_current_branch()
     base_path = get_config(conn, "base_path")
@@ -112,7 +118,7 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
         len(deleted),
     )
 
-    dep_ids = _sync_deps_if_needed(conn, ctx, base_path, sync_deps)
+    dep_ids = _sync_deps_if_needed(conn, ctx, base_path, sync_deps, force_deps)
     upsert_branch_entities(conn, branch, dep_ids)
 
     if not changed and not deleted and not mtime_only:
@@ -184,7 +190,9 @@ def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     )
 
 
-def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override) -> list[str]:
+def _sync_deps_if_needed(
+    conn, ctx, base_path, sync_deps_override, force_deps
+) -> list[str]:
     if sync_deps_override is None:
         sync_deps = get_config(conn, "sync_deps") == "true"
     else:
@@ -225,7 +233,8 @@ def _sync_deps_if_needed(conn, ctx, base_path, sync_deps_override) -> list[str]:
         )
         tracked = get_dependency(conn, pkg.name)
         if (
-            tracked
+            not force_deps
+            and tracked
             and tracked["version"] == pkg.version
             and tracked.get("last_modified") == pkg.mtime
         ):
