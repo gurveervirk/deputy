@@ -19,17 +19,17 @@ from deputy.database.sqlite import (
     delete_dependency,
     delete_entities_by_package,
     get_branch_files,
-    get_config,
     get_dependency,
     get_dependency_entity_ids_by_package,
     get_entities_by_path,
     get_entity_by_id,
     get_entity_by_path,
     get_filtered_entities_by_path,
+    get_metadata,
     init_schema,
     list_dependencies,
     open_database,
-    set_config,
+    set_metadata,
     update_mtime,
     upsert_branch_entities,
     upsert_branch_file,
@@ -64,8 +64,8 @@ console = Console()
 def init_database(path: str) -> None:
     conn = open_database(path)
     init_schema(conn)
-    set_config(conn, "base_path", os.getcwd())
-    set_config(conn, "deputy_cli_version", __version__)
+    set_metadata(conn, "base_path", os.getcwd())
+    set_metadata(conn, "deputy_cli_version", __version__)
     conn.commit()
     conn.close()
     if path != ".deputy.db":
@@ -79,7 +79,7 @@ def init_database(path: str) -> None:
 def run_sync(force: bool, sync_deps: bool | None = None) -> None:
     conn = _open_database()
     branch = get_current_branch()
-    base_path = get_config(conn, "base_path")
+    base_path = get_metadata(conn, "base_path")
     if not base_path:
         base_path = os.getcwd()
 
@@ -269,7 +269,7 @@ def search_entities(
     cfg = read_config()
     if cfg.get("auto_sync", "false") == "true":
         console.print("[dim]auto_sync: checking for changes...[/dim]")
-        base_path = get_config(conn, "base_path") or os.getcwd()
+        base_path = get_metadata(conn, "base_path") or os.getcwd()
         try:
             if _is_stale(conn, branch, base_path):
                 console.print("[dim]auto_sync: project changed, running sync...[/dim]")
@@ -391,7 +391,7 @@ def get_entity_info(
     cfg = read_config()
     if cfg.get("auto_sync", "false") == "true":
         console.print("[dim]auto_sync: checking for changes...[/dim]")
-        base_path = get_config(conn, "base_path") or os.getcwd()
+        base_path = get_metadata(conn, "base_path") or os.getcwd()
         try:
             if _is_stale(conn, branch, base_path):
                 console.print("[dim]auto_sync: project changed, running sync...[/dim]")
@@ -421,7 +421,7 @@ def get_entity_info(
             conn.close()
             return [] if all_matches else None
 
-    base_path = get_config(conn, "base_path") or os.getcwd()
+    base_path = get_metadata(conn, "base_path") or os.getcwd()
     for i, row in enumerate(results):
         if row["type"] == "INHERITED_MEMBER":
             meta = json.loads(row["metadata_json"])

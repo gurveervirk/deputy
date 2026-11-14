@@ -11,7 +11,7 @@ from deputy import (
     _get_column_value,
     _get_file_path,
 )
-from deputy.database.sqlite import set_config, upsert_branch_entities, upsert_entity
+from deputy.database.sqlite import set_metadata, upsert_branch_entities, upsert_entity
 from deputy.tools.core import _compute_source, get_entity_info
 
 
@@ -478,7 +478,7 @@ class TestGetEntityInfo:
             tmp_path = f.name
         subdir = os.path.dirname(tmp_path)
         try:
-            set_config(info_db, "base_path", subdir)
+            set_metadata(info_db, "base_path", subdir)
             info_db.commit()
 
             source_meta = json.dumps({"fqn": "mod", "path": os.path.basename(tmp_path)})

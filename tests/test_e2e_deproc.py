@@ -20,7 +20,7 @@ from deputy.database.sqlite import (
     get_inheritance_pin,
     init_schema,
     open_database,
-    set_config,
+    set_metadata,
     upsert_branch_entities,
     upsert_branch_file,
     upsert_entity,
@@ -831,7 +831,7 @@ class TestJavaTypeReferenceEndToEnd:
         db_path = tmp_path / "deputy.db"
         conn = open_database(str(db_path))
         init_schema(conn)
-        set_config(conn, "base_path", str(project))
+        set_metadata(conn, "base_path", str(project))
         conn.commit()
         conn.close()
 
@@ -888,7 +888,7 @@ class TestJavaTypeReferenceEndToEnd:
 
         conn = open_database(str(db_path))
         init_schema(conn)
-        set_config(conn, "base_path", str(project))
+        set_metadata(conn, "base_path", str(project))
         conn.execute("DROP TABLE class_bases")
         conn.execute(
             """CREATE TABLE class_bases (
@@ -1022,7 +1022,7 @@ class TestJavaTypeReferenceEndToEnd:
 
         conn = open_database(str(db_path))
         init_schema(conn)
-        set_config(conn, "base_path", str(project))
+        set_metadata(conn, "base_path", str(project))
         conn.execute("DROP TABLE class_bases")
         conn.execute(
             """CREATE TABLE class_bases (
