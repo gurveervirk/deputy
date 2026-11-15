@@ -103,7 +103,14 @@ def init(
 
 @app.command()
 def sync(
-    force: bool = typer.Option(False, "--force", "-f", help="Force full re-sync"),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Re-parse every project file"
+    ),
+    force_deps: bool = typer.Option(
+        False,
+        "--force-deps",
+        help="Re-index every dependency package; implies --sync-deps",
+    ),
     sync_deps: bool = typer.Option(
         None, "--sync-deps", help="Sync dependency packages from .venv"
     ),
@@ -111,11 +118,14 @@ def sync(
         None, "--no-sync-deps", help="Skip dependency sync"
     ),
 ) -> None:
+    if force_deps and no_sync_deps:
+        console.print("[red]--force-deps cannot be combined with --no-sync-deps[/red]")
+        raise typer.Exit(code=2)
     resolved = sync_deps
     if no_sync_deps and resolved is None:
         resolved = False
     try:
-        run_sync(force, resolved)
+        run_sync(force, resolved, force_deps)
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
