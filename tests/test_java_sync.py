@@ -2,6 +2,8 @@ import json
 import os
 import tempfile
 
+import pytest
+
 from deputy.core import create_context
 from deputy.database.sqlite import (
     get_entity_ids_by_fqn,
@@ -53,6 +55,22 @@ class TestLanguageDetection:
 
     def test_unknown_extension(self):
         assert _language_for_path("src/readme.md") is None
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "data/report.csv",
+            "notes/todo.ja",
+            "build/out.va",
+            "src/archive.a",
+            "src/odd.",
+        ],
+    )
+    def test_extension_ending_in_a_letter_of_java_is_unknown(self, path):
+        assert _language_for_path(path) is None
+
+    def test_extension_match_ignores_case(self):
+        assert _language_for_path("src/Main.JAVA") == "java"
 
 
 class TestMultiLanguageProcessFiles:
