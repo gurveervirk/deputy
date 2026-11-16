@@ -7,8 +7,12 @@ on:
 jobs:
   validate-release:
     runs-on: ubuntu-latest
+    outputs:
+      changed_since: ${{ steps.previous.outputs.changed_since }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
@@ -32,6 +36,17 @@ jobs:
           if f'__version__ = "{version}"' not in version_source:
               raise SystemExit("src/deputy/_version.py does not match pyproject.toml")
           PY
+      - name: Find the previous release
+        id: previous
+        run: |
+          previous="$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)"
+          if [ -z "$previous" ]; then
+            previous=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+            echo "No earlier release tag; scanning the whole repository."
+          else
+            echo "Previous release: $previous"
+          fi
+          echo "changed_since=$previous" >> "$GITHUB_OUTPUT"
 
   test:
     runs-on: ubuntu-latest
@@ -91,6 +106,8 @@ jobs:
       pull-requests: write
     with:
       scan_mode: full
+      changed_since: ${{ needs.validate-release.outputs.changed_since }}
+      tolerate_unavailable: true
 
   publish:
     needs: [validate-release, test, clean-install, provenance]

@@ -33,7 +33,7 @@ deputy is a Python/Java code intelligence CLI built on deproc (`../deproc`), the
 - Title format: `<type>[scope]: <imperative description>`, lowercase type, no trailing period.
 - State compatibility and dependency impact, prerequisite PRs, and branch dependencies. Give a specific review focus.
 - Open the pull request as a draft (`gh pr create --draft`). Code Provenance skips drafts. When the work is final and the other checks are green, mark it ready with `gh pr ready` to start the scan.
-- After opening, wait for checks with `gh pr checks --watch --fail-fast`; hand off only when green, or report the failing gate. If Code Provenance fails because the scanner is rate-limited, report the retry time instead of waiting; it is not a required check, but it is required before a release.
+- After opening, wait for checks with `gh pr checks --watch --fail-fast`; hand off only when green, or report the failing gate. If Code Provenance fails because the scanner is rate-limited, report the retry time instead of waiting; it is not a required check, and a release scan that cannot complete warns instead of blocking.
 - Keep titles, descriptions, and comments free of private planning information.
 
 ## Cross-repository work
@@ -55,7 +55,7 @@ deputy is a Python/Java code intelligence CLI built on deproc (`../deproc`), the
 
 ## Branch model and workflow standards (set up 2026-11-01)
 - `main` is reviewed work; `integration` is the unapproved agent frontier and is never merged to `main` wholesale; task branches are `<type>/<slug>`.
-- `lint` and `pytests` also run on `integration` and on PRs against `integration`, `feat/**`, `fix/**`. Code Provenance and `docs` remain `main`-only. Code Provenance skips draft pull requests and also runs, blocking, before `publish` on release tags. The `deproc_ref` mechanism is unchanged.
+- `lint` and `pytests` also run on `integration` and on PRs against `integration`, `feat/**`, `fix/**`. Code Provenance and `docs` remain `main`-only. Code Provenance skips draft pull requests and also runs before `publish` on release tags, scanning the files changed since the previous tag and warning instead of blocking when the scanner is unavailable. The `deproc_ref` mechanism is unchanged.
 - Contribution files: `CONTRIBUTING.md`, `.github/pull_request_template.md`, `.github/ISSUE_TEMPLATE/`, `.github/RELEASE_CHECKLIST.md`, `.github/adr/0000-template.md`.
 - `CLAUDE.md` imports `AGENTS.md` and `AGENTS.local.md`.
 - The same set exists in deproc; keep shared conventions identical in both.

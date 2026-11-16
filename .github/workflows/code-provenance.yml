@@ -10,6 +10,17 @@ on:
       - reopened
       - ready_for_review
   workflow_dispatch:
+    inputs:
+      changed_since:
+        description: Scan only files added or modified since this ref (empty scans everything)
+        required: false
+        type: string
+        default: ''
+      changed_path:
+        description: Limit changed_since to this path
+        required: false
+        type: string
+        default: .
   workflow_call:
     inputs:
       scan_mode:
@@ -17,6 +28,21 @@ on:
         required: false
         type: string
         default: full
+      changed_since:
+        description: Scan only files added or modified since this ref (requires full scan mode)
+        required: false
+        type: string
+        default: ''
+      changed_path:
+        description: Limit changed_since to this path
+        required: false
+        type: string
+        default: .
+      tolerate_unavailable:
+        description: Report a scan that cannot complete as a warning instead of failing the job
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -36,6 +62,30 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: ${{ inputs.changed_since == '' && 1 || 0 }}
+      - name: Select files changed since the base ref
+        id: changed
+        if: inputs.changed_since != ''
+        env:
+          CHANGED_SINCE: ${{ inputs.changed_since }}
+          CHANGED_PATH: ${{ inputs.changed_path || '.' }}
+          SCAN_MODE: ${{ inputs.scan_mode || (github.event_name == 'workflow_dispatch' && 'full' || 'delta') }}
+        run: |
+          if [[ "$SCAN_MODE" != 'full' ]]; then
+            echo "::error title=Code Provenance::changed_since requires full scan mode, got '$SCAN_MODE'."
+            exit 2
+          fi
+          base="$(git rev-parse --verify --quiet "${CHANGED_SINCE}^{tree}")" || {
+            echo "::error title=Code Provenance::changed_since '$CHANGED_SINCE' does not resolve to a commit or tree."
+            exit 2
+          }
+          list="$RUNNER_TEMP/scanoss-changed-files"
+          git diff -z --name-only --diff-filter=d "$base" HEAD -- "$CHANGED_PATH" > "$list"
+          count="$(tr -cd '\0' < "$list" | wc -c | tr -d ' ')"
+          echo "SCANOSS_CHANGED_FILES_FROM=$list" >> "$GITHUB_ENV"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Scanning $count file(s) under '$CHANGED_PATH' added or modified since '$CHANGED_SINCE'." >> "$GITHUB_STEP_SUMMARY"
       - name: Enable authored scan surface
         env:
           SCANOSS_RUNTIME_IMAGE: ghcr.io/scanoss/scanoss-py@sha256:33a63229a4e36771dc90d1e7efc79f57e4e57d3a4b5c20cf52ea2c70f964481c
@@ -46,6 +96,9 @@ jobs:
           echo "SCANOSS_RUNTIME_IMAGE=$SCANOSS_RUNTIME_IMAGE" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/scanoss-bin" >> "$GITHUB_PATH"
       - name: Scan changed source
+        id: scan
+        if: steps.changed.outputs.count != '0'
+        continue-on-error: ${{ inputs.tolerate_unavailable == true }}
         uses: scanoss/gha-code-scan@d3c8f659544885761c8e3b96743ea14b830474aa
         with:
           github.token: ${{ github.token }}
@@ -61,6 +114,23 @@ jobs:
           halt_on_error: true
           matchAnnotations: true
           debug: true
+      - name: Report scan outcome
+        if: always() && (steps.scan.outcome == 'failure' || steps.changed.outputs.count == '0')
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          TOLERATED: ${{ inputs.tolerate_unavailable == true }}
+          CHANGED_SINCE: ${{ inputs.changed_since }}
+          CHANGED_PATH: ${{ inputs.changed_path || '.' }}
+        run: |
+          if [[ "$SCAN_OUTCOME" == 'failure' && "$TOLERATED" == 'true' ]]; then
+            message='The scan did not complete (for example, the scanner is rate-limited or unavailable). This run tolerates that, so it has no provenance result. Rerun the scan manually once the scanner is available.'
+            echo "::warning title=Code Provenance::$message"
+            echo "**Code Provenance:** $message" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$SCAN_OUTCOME" != 'failure' ]]; then
+            message="No files under '$CHANGED_PATH' were added or modified since '$CHANGED_SINCE'; nothing to scan."
+            echo "::notice title=Code Provenance::$message"
+            echo "**Code Provenance:** $message" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   code-provenance-fork:
     name: Code Provenance (fork safe skip)

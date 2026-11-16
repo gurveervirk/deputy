@@ -45,6 +45,26 @@ PY
   rm -rf "$filter_root"
 }
 
+keep_listed_files() {
+  local list_path=$1
+  local scan_path=$2
+
+  python3 - "$list_path" "$scan_path" <<'PY'
+import os
+import pathlib
+import sys
+
+listed = pathlib.Path(sys.argv[1]).read_bytes().decode('utf-8').split('\0')
+keep = {entry for entry in listed if entry}
+root = sys.argv[2]
+for directory, subdirectories, files in os.walk(root):
+    for name in files + [entry for entry in subdirectories if os.path.islink(os.path.join(directory, entry))]:
+        path = os.path.join(directory, name)
+        if os.path.relpath(path, root).replace(os.sep, '/') not in keep:
+            os.unlink(path)
+PY
+}
+
 filter_delta() {
   local host_root=$1
   local delta_dir=$2
@@ -139,9 +159,21 @@ if (( scan_index >= 0 )); then
       cleanup_scan_tree
       exit 2
     fi
+    if [[ -n "${SCANOSS_CHANGED_FILES_FROM:-}" ]]; then
+      if [[ ! -f "$SCANOSS_CHANGED_FILES_FROM" ]]; then
+        printf 'SCANOSS_CHANGED_FILES_FROM does not name a file: %s\n' "$SCANOSS_CHANGED_FILES_FROM" >&2
+        cleanup_scan_tree
+        exit 2
+      fi
+      keep_listed_files "$SCANOSS_CHANGED_FILES_FROM" "$scan_tree"
+    fi
     filter_scan_path "$host_root/scanoss.json" "$scan_tree"
     args[scan_path_index]="$scan_relative"
     trap cleanup_scan_tree EXIT
+  fi
+  if [[ -n "${SCANOSS_CHANGED_FILES_FROM:-}" && -z "$scan_tree" ]]; then
+    printf '%s\n' 'SCANOSS_CHANGED_FILES_FROM requires a full scan of the repository root' >&2
+    exit 2
   fi
   args+=(--retry 0 --all-hidden --all-extensions --all-folders)
 
