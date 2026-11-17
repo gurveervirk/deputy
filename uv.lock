@@ -178,7 +178,7 @@ requires-dist = [
 
 [[package]]
 name = "deproc-python"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "../deproc/deproc-python" }
 dependencies = [
     { name = "deproc-core" },
@@ -213,7 +213,7 @@ requires-dist = [{ name = "tree-sitter", specifier = ">=0.25.2,<0.26" }]
 
 [[package]]
 name = "deputy-cli"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "deproc-core" },
