@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from pathlib import Path
 
 from deputy.utils.config_file import read_config
@@ -7,10 +8,19 @@ from deputy.utils.config_file import read_config
 _log_initialized = False
 
 
+class _StderrHandler(logging.StreamHandler):
+    def __init__(self) -> None:
+        logging.Handler.__init__(self)
+
+    @property
+    def stream(self):
+        return sys.stderr
+
+
 def _reset_logging() -> None:
     global _log_initialized
-    root = logging.getLogger("deputy")
-    root.handlers.clear()
+    for name in ("deputy", "deproc"):
+        logging.getLogger(name).handlers.clear()
     _log_initialized = False
 
 
@@ -33,8 +43,9 @@ def init_logging(level: str | None = None, log_file: str | None = None) -> None:
     log_dir = os.path.dirname(log_file)
     Path(log_dir).mkdir(parents=True, exist_ok=True)
 
+    log_level = getattr(logging, level.upper(), logging.WARNING)
     root = logging.getLogger("deputy")
-    root.setLevel(getattr(logging, level.upper(), logging.WARNING))
+    root.setLevel(log_level)
 
     fh = logging.FileHandler(log_file, mode="a", encoding="utf-8")
     fh.setLevel(logging.DEBUG)
@@ -44,6 +55,13 @@ def init_logging(level: str | None = None, log_file: str | None = None) -> None:
     )
     fh.setFormatter(fmt)
     root.addHandler(fh)
+
+    deproc = logging.getLogger("deproc")
+    deproc.setLevel(log_level)
+    deproc.addHandler(fh)
+    terminal = _StderrHandler()
+    terminal.setLevel(logging.WARNING)
+    deproc.addHandler(terminal)
 
     _log_initialized = True
 

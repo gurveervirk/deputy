@@ -50,3 +50,5 @@ deputy config analysis_languages python
 ```
 
 Log level also respects the `DEPUTY_LOG_LEVEL` environment variable.
+
+The log file also records messages from deproc, the analysis library deputy uses, at the same level. deproc warnings, such as a package shadowed by a same-named package in another root, are also printed to standard error.
