@@ -204,6 +204,7 @@ def _process_files(
         root_metadata_by_id: dict[str, dict[str, str]] = {}
         container_roots: dict[str, list[dict[str, str]]] = {}
         linked_roots: list[tuple[EntityRegistry, dict[str, str]]] = []
+        root_labels: dict[str | None, str] = {}
 
         files_by_root: dict[tuple[str, str, str], list] = {}
         for fmeta in lang_files:
@@ -251,9 +252,12 @@ def _process_files(
             )
             linker.link_files(source_files, root_ctx)
             linked_roots.append((root_ctx.entity_registry, root_metadata))
+            root_labels[semantic_root_id] = f"{root_path} [{root_kind}]"
 
         if lang == "python":
-            apply_regular_package_precedence([registry for registry, _ in linked_roots])
+            apply_regular_package_precedence(
+                [registry for registry, _ in linked_roots], root_labels=root_labels
+            )
         for registry, root_metadata in linked_roots:
             for entity in registry.values():
                 if isinstance(entity, SemanticContainer):
