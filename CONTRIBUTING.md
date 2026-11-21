@@ -75,6 +75,12 @@ To check behaviour end to end, run the CLI against a scratch project (`uv run de
 - Use the in-memory database for database tests: `open_database(":memory:")`, with the `db` and `sample_entities` fixtures in `tests/conftest.py`.
 - Do not weaken or skip a test to make a check pass.
 
+## Docstrings and documentation
+
+- Docstrings follow [PEP 257](https://peps.python.org/pep-0257/): a one-line summary phrased as a command ("Return the ...") and ending in a period, then a blank line before any detail. `ruff check` enforces the format but does not require a docstring on every function.
+- Add a docstring only where the name and signature do not explain the behaviour.
+- Keep documentation changes in proportion to the code change.
+
 ## Pull requests
 
 - Open pull requests with the repository template and keep one purpose per pull request.
