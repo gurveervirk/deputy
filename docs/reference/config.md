@@ -58,8 +58,9 @@ dependency_roots=../libs/acme
 ### Packages that span roots
 
 - A Python namespace package contributed by several roots is one package entity. Its `roots` metadata lists every contributing root.
-- A regular Python package (one with `__init__.py`) wins over a same-named directory without `__init__.py` in another root, as it does in Python's import system. The modules in the shadowed directory stay indexed but have no parent package, and a message is printed to standard error during `deputy sync`. It is not written to `.deputy/deputy.log`.
-- Two regular packages with the same name in different roots are both indexed as separate packages. Python imports only the first one on its path, so lookups can show modules Python would not import.
+- A regular Python package (one with `__init__.py`) wins over a same-named directory without `__init__.py` in another root, as it does in Python's import system. The modules in the shadowed directory stay indexed but have no parent package, and `deputy sync` reports a warning.
+- Two regular packages with the same name in different roots are both indexed as separate packages, and `deputy sync` reports a warning naming the roots. Python imports only the first one on its path, so lookups can show modules Python would not import.
+- These warnings are printed to standard error and written to `.deputy/deputy.log`. `--quiet`, or `log_level=ERROR`, suppresses them.
 - Java packages declared in two named modules are separate package entities, one per module, each listing only its own classes. Their `module_name` metadata names the module.
 
 ## Managing config
