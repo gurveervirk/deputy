@@ -77,8 +77,8 @@ To check behaviour end to end, run the CLI against a scratch project (`uv run de
 
 ## Docstrings and documentation
 
-- Docstrings follow [PEP 257](https://peps.python.org/pep-0257/): a one-line summary phrased as a command ("Return the ...") and ending in a period, then a blank line before any detail. `ruff check` enforces the format but does not require a docstring on every function.
-- Add a docstring only where the name and signature do not explain the behaviour.
+- Docstrings follow the [Google style](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings): a one-line summary phrased as a command ("Return the ...") and ending in a period, then a blank line before any detail and `Args:`, `Returns:`, or `Raises:` sections. `ruff check` enforces the format but does not require a docstring on every function.
+- Add a docstring, or a section, only where the name, signature, and type hints do not explain the behaviour. Do not repeat types.
 - Keep documentation changes in proportion to the code change.
 
 ## Pull requests
