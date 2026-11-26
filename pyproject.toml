@@ -1,6 +1,6 @@
 [project]
 name = "deputy-cli"
-version = "0.4.0"
+version = "0.4.1"
 description = "A code intelligence CLI tool for querying and navigating code entities."
 readme = "README.md"
 authors = [
