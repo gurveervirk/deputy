@@ -178,7 +178,7 @@ requires-dist = [
 
 [[package]]
 name = "deproc-python"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "../deproc/deproc-python" }
 dependencies = [
     { name = "deproc-core" },
