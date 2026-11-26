@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 from deproc.core.scope import AnalysisScope, RootDescriptor
@@ -548,6 +549,36 @@ def test_regular_package_precedence_survives_rehydration(tmp_path):
     assert restored.entity_registry.get(shadowed_id).parent_id is None
     (kept_id,) = restored.entity_registry.get_ids_by_fqn("ns.a")
     assert restored.entity_registry.get(kept_id).parent_id == package_id
+
+
+def test_same_named_regular_packages_warning_names_root_directories(tmp_path, caplog):
+    project = tmp_path / "project"
+    generated = tmp_path / "generated"
+    for root, module in ((project, "a"), (generated, "b")):
+        (root / "acme").mkdir(parents=True)
+        (root / "acme" / "__init__.py").write_text("")
+        (root / "acme" / f"{module}.py").write_text("x = 1\n")
+    scope = AnalysisScope(
+        project_roots=[str(project)],
+        generated_roots=[str(generated)],
+        selected_languages=["python"],
+        selected_file_extensions=[".py"],
+    )
+    context = create_context(str(project), None, scope=scope)
+
+    with caplog.at_level(logging.WARNING, logger="deproc"):
+        _process_files(context, get_source_files(context), str(project))
+
+    messages = [
+        r.getMessage()
+        for r in caplog.records
+        if "defined in more than one root" in r.getMessage()
+    ]
+    assert len(messages) == 1
+    assert (
+        f"({os.path.abspath(project)} [project], "
+        f"{os.path.abspath(generated)} [generated])"
+    ) in messages[0]
 
 
 def test_java_package_shared_by_two_named_modules_stays_separate(tmp_path):
