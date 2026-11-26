@@ -3,7 +3,9 @@
 deputy is a Python/Java code intelligence CLI built on deproc (`../deproc`), the source-analysis layer. Humans follow `CONTRIBUTING.md`; this file adds the rules agents must follow. Owner-specific rules live in `AGENTS.local.md` when present (not tracked).
 
 ## Style and sequencing
-- Do not add code comments unless the owner asks for them.
+- Do not add code comments unless the owner asks for them. Docstrings are optional too: add one only where a public module, class, or function's behaviour, arguments, or side effects are not clear from its name and signature.
+- Docstrings use Google style: a one-line summary phrased as a command ("Return ...", not "Returns ...") and ending in a period, then a blank line before any detail and `Args:`, `Returns:`, or `Raises:` sections. Add a section only when the name, signature, and type hints leave something unclear, and do not repeat types. An `Args:` section lists every parameter. Ruff's `D` rules (`google` convention) check the format, not whether a docstring is present.
+- Keep documentation proportional to the change. A small change gets a short edit or none. Do not restate the code, the signature, or the pull request in docstrings, READMEs, skills, or docs.
 - Work linearly: inspect, implement, validate, in that order, to keep context and traceability.
 - Use `ruff format` (two blank lines between top-level functions and classes). Follow existing naming and typing.
 
